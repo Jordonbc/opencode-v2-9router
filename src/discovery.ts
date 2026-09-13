@@ -20,6 +20,8 @@ export type DiscoveredModel = {
   readonly id: string;
   readonly reasoning: boolean;
   readonly thinkingCanDisable: boolean;
+  readonly contextLimit?: number;
+  readonly outputLimit?: number;
 };
 
 const isModelID = (value: unknown): value is string => {
@@ -28,10 +30,22 @@ const isModelID = (value: unknown): value is string => {
   return !/[\u0000-\u001f\u007f]/u.test(value);
 };
 
+const tokenLimit = (...values: unknown[]): number | undefined => {
+  for (const value of values) {
+    if (typeof value === "number" && Number.isSafeInteger(value) && value > 0) return value;
+  }
+  return undefined;
+};
+
 const parseModel = (item: unknown): DiscoveredModel | undefined => {
   if (!item || typeof item !== "object") return undefined;
 
-  const model = item as { id?: unknown; capabilities?: unknown };
+  const model = item as {
+    id?: unknown;
+    capabilities?: unknown;
+    context_length?: unknown;
+    max_completion_tokens?: unknown;
+  };
   if (!isModelID(model.id)) return undefined;
 
   const capabilities =
@@ -39,10 +53,15 @@ const parseModel = (item: unknown): DiscoveredModel | undefined => {
       ? (model.capabilities as Record<string, unknown>)
       : {};
 
+  const contextLimit = tokenLimit(model.context_length, capabilities.contextWindow);
+  const outputLimit = tokenLimit(model.max_completion_tokens, capabilities.maxOutput);
+
   return {
     id: model.id,
     reasoning: capabilities.reasoning === true,
     thinkingCanDisable: capabilities.thinkingCanDisable === true,
+    ...(contextLimit === undefined ? {} : { contextLimit }),
+    ...(outputLimit === undefined ? {} : { outputLimit }),
   };
 };
 

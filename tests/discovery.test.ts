@@ -13,11 +13,13 @@ before(async () => {
       response.end(
         JSON.stringify({
           data: [
-            { id: "ocg/muse-spark-1.3-contributor" },
             {
               id: "ocg/muse-spark-1.3-contributor",
+              context_length: 1_000_000,
+              max_completion_tokens: 131_072,
               capabilities: { reasoning: true, thinkingCanDisable: true },
             },
+            { id: "ocg/muse-spark-1.3-contributor" },
             { id: "" },
             { id: " bad" },
             { id: "bad\nmodel" },
@@ -63,6 +65,8 @@ test("parses, filters, deduplicates, and preserves model IDs", () => {
       data: [
         {
           id: "ocg/muse-spark-1.3-contributor",
+          context_length: 1_000_000,
+          max_completion_tokens: 131_072,
           capabilities: { reasoning: true, thinkingCanDisable: true },
         },
         { id: "ocg/muse-spark-1.3-contributor" },
@@ -78,6 +82,8 @@ test("parses, filters, deduplicates, and preserves model IDs", () => {
         id: "ocg/muse-spark-1.3-contributor",
         reasoning: true,
         thinkingCanDisable: true,
+        contextLimit: 1_000_000,
+        outputLimit: 131_072,
       },
       { id: "valid/model", reasoning: false, thinkingCanDisable: false },
     ],
@@ -94,8 +100,10 @@ test("discovers models through a mock HTTP server with Bearer auth", async () =>
   assert.deepEqual(models, [
     {
       id: "ocg/muse-spark-1.3-contributor",
-      reasoning: false,
-      thinkingCanDisable: false,
+      reasoning: true,
+      thinkingCanDisable: true,
+      contextLimit: 1_000_000,
+      outputLimit: 131_072,
     },
   ]);
 });

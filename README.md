@@ -82,9 +82,9 @@ This is not a V1 config-hook plugin. Its default export is a V2 definition with 
 
 The provider and every discovered model set `package` to `aisdk:@ai-sdk/openai-compatible`. The `aisdk:` catalog discriminator selects OpenCode's AI SDK resolver, which normalizes the remainder to the official OpenAI-compatible provider package. Provider `settings.baseURL` selects the configured gateway, while `settings.apiKey` is resolved by that transport into `Authorization: Bearer <key>`. Each model's catalog key remains its full discovered route and `modelID` repeats that exact value, which is the identifier sent upstream. These fields are required by the beta-19425 resolver; the older `model.api` shape belongs to a different V2 snapshot.
 
-Reasoning models receive `minimal`, `low`, `medium`, `high`, `xhigh`, and `max` variants. Models that advertise `thinkingCanDisable` also receive `none`. Each variant sends OpenAI-compatible `reasoning_effort`, which 9Router translates or clamps for the selected upstream. Models that do not advertise reasoning receive no reasoning variants.
+For a discovered route that matches a model already known to OpenCode, the plugin mirrors that model's exact OpenAI-compatible reasoning-effort variants. This prevents the plugin from inventing `max` for a model whose direct OpenCode entry stops at `xhigh`. If no direct model matches, the conservative fallback is `low`, `medium`, `high`, and `xhigh`, plus `none` only when 9Router advertises `thinkingCanDisable`. Models that do not advertise reasoning receive no reasoning variants.
 
-Unknown pricing and other metadata remain at the SDK's defaults rather than being invented.
+The plugin copies `context_length` and `max_completion_tokens` from 9Router's live model response into OpenCode's context and output limits, falling back to the equivalent capability fields when needed. Unknown pricing and other metadata remain at the SDK's defaults rather than being invented.
 
 ## Security boundaries
 

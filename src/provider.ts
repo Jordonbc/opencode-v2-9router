@@ -6,7 +6,9 @@ export const PROVIDER_ID = "9router";
 export const PROVIDER_NAME = "9Router";
 export const PROVIDER_PACKAGE = "aisdk:@ai-sdk/openai-compatible";
 
-const REASONING_EFFORTS = ["minimal", "low", "medium", "high", "xhigh", "max"] as const;
+const REASONING_EFFORTS = ["none", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
+type ReasoningEffort = (typeof REASONING_EFFORTS)[number];
+const FALLBACK_REASONING_EFFORTS = ["low", "medium", "high", "xhigh"] as const;
 
 export type CatalogDraft = Parameters<
   Parameters<Plugin.Context["catalog"]["transform"]>[0]
@@ -24,14 +26,48 @@ export const displayName = (modelID: string): string => {
     .join(" ");
 };
 
+const isReasoningEffort = (value: unknown): value is ReasoningEffort =>
+  typeof value === "string" && REASONING_EFFORTS.some((effort) => effort === value);
+
+export const directModelID = (routeID: string): string =>
+  routeID.slice(routeID.lastIndexOf("/") + 1).replace(/-review$/u, "");
+
+export const directReasoningEfforts = (
+  catalog: CatalogDraft,
+  routeID: string,
+): ReasoningEffort[] => {
+  const modelID = directModelID(routeID);
+
+  for (const record of catalog.provider.list()) {
+    if (String(record.provider.id) === PROVIDER_ID) continue;
+
+    const direct = record.models.get(modelID);
+    if (!direct) continue;
+
+    const efforts = direct.variants
+      .map((variant) => variant.settings?.reasoningEffort)
+      .filter(isReasoningEffort);
+    if (efforts.length > 0) return [...new Set(efforts)];
+  }
+
+  return [];
+};
+
 export const reasoningVariants = (
-  model: Pick<DiscoveredModel, "reasoning" | "thinkingCanDisable">,
+  catalog: CatalogDraft,
+  model: Pick<DiscoveredModel, "id" | "reasoning" | "thinkingCanDisable">,
 ): Array<{ id: string; settings: { reasoningEffort: string } }> => {
   if (!model.reasoning) return [];
 
-  const efforts = model.thinkingCanDisable
-    ? (["none", ...REASONING_EFFORTS] as const)
-    : REASONING_EFFORTS;
+  const direct = directReasoningEfforts(catalog, model.id).filter(
+    (effort) => effort !== "none" || model.thinkingCanDisable,
+  );
+  const efforts =
+    direct.length > 0
+      ? direct
+      : model.thinkingCanDisable
+        ? (["none", ...FALLBACK_REASONING_EFFORTS] as const)
+        : FALLBACK_REASONING_EFFORTS;
   return efforts.map((effort) => ({ id: effort, settings: { reasoningEffort: effort } }));
 };
 
@@ -52,13 +88,16 @@ export const register9RouterCatalog = (
   });
 
   for (const discovered of models) {
+    const variants = reasoningVariants(catalog, discovered);
     catalog.model.update(PROVIDER_ID, discovered.id, (model) => {
       model.name = displayName(discovered.id);
       model.modelID = discovered.id as unknown as typeof model.modelID;
       model.package = PROVIDER_PACKAGE;
       model.enabled = true;
       model.status = "active";
-      model.variants = reasoningVariants(discovered) as unknown as typeof model.variants;
+      model.variants = variants as unknown as typeof model.variants;
+      if (discovered.contextLimit !== undefined) model.limit.context = discovered.contextLimit;
+      if (discovered.outputLimit !== undefined) model.limit.output = discovered.outputLimit;
     });
   }
 };

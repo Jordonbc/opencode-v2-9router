@@ -27,7 +27,11 @@ const createCatalog = () => {
     model: {
       get: () => undefined,
       update: (_providerID: string, id: string, update: (model: MutableRecord) => void) => {
-        const model = models.get(id) ?? { id, modelID: id };
+        const model = models.get(id) ?? {
+          id,
+          modelID: id,
+          limit: { context: 0, output: 0 },
+        };
         models.set(id, model);
         update(model);
       },
@@ -39,31 +43,102 @@ const createCatalog = () => {
   return { draft, models, providers };
 };
 
+const withDirectModel = (id: string, efforts: readonly string[]) => {
+  const catalog = createCatalog();
+  const direct = {
+    provider: { id: "opencode", name: "OpenCode", package: "aisdk:@ai-sdk/openai" },
+    models: new Map([
+      [
+        id,
+        {
+          id,
+          variants: efforts.map((effort) => ({
+            id: effort,
+            settings: { reasoningEffort: effort },
+          })),
+        },
+      ],
+    ]),
+  };
+  catalog.draft.provider.list = () => [direct] as never;
+  return catalog;
+};
+
 test("creates a human-friendly name without changing the route ID", () => {
   assert.equal(displayName("ocg/muse-spark-1.3-contributor"), "Muse Spark 1.3 Contributor");
 });
 
 test("creates selectable reasoning efforts only for advertised reasoning models", () => {
-  assert.deepEqual(reasoningVariants({ reasoning: false, thinkingCanDisable: true }), []);
-  assert.deepEqual(reasoningVariants({ reasoning: true, thinkingCanDisable: false }), [
-    { id: "minimal", settings: { reasoningEffort: "minimal" } },
+  const catalog = createCatalog();
+  assert.deepEqual(
+    reasoningVariants(catalog.draft, {
+      id: "unknown/model",
+      reasoning: false,
+      thinkingCanDisable: true,
+    }),
+    [],
+  );
+  assert.deepEqual(reasoningVariants(catalog.draft, {
+    id: "unknown/model",
+    reasoning: true,
+    thinkingCanDisable: false,
+  }), [
     { id: "low", settings: { reasoningEffort: "low" } },
     { id: "medium", settings: { reasoningEffort: "medium" } },
     { id: "high", settings: { reasoningEffort: "high" } },
     { id: "xhigh", settings: { reasoningEffort: "xhigh" } },
-    { id: "max", settings: { reasoningEffort: "max" } },
   ]);
-  assert.equal(reasoningVariants({ reasoning: true, thinkingCanDisable: true })[0]?.id, "none");
+  assert.equal(reasoningVariants(catalog.draft, {
+    id: "unknown/model",
+    reasoning: true,
+    thinkingCanDisable: true,
+  })[0]?.id, "none");
+});
+
+test("reuses the exact direct OpenCode reasoning levels", () => {
+  const catalog = withDirectModel("muse-spark-1.3-contributor", [
+    "minimal",
+    "low",
+    "medium",
+    "high",
+    "xhigh",
+  ]);
+  const variants = reasoningVariants(catalog.draft, {
+    id: "ocg/muse-spark-1.3-contributor",
+    reasoning: true,
+    thinkingCanDisable: true,
+  });
+
+  assert.deepEqual(variants.map((variant) => variant.id), [
+    "minimal",
+    "low",
+    "medium",
+    "high",
+    "xhigh",
+  ]);
+  assert.equal(variants.some((variant) => variant.id === "max"), false);
 });
 
 test("registers the exact V2 provider and model transport shape", () => {
-  const catalog = createCatalog();
   const id = "ocg/muse-spark-1.3-contributor";
+  const catalog = withDirectModel("muse-spark-1.3-contributor", [
+    "minimal",
+    "low",
+    "medium",
+    "high",
+    "xhigh",
+  ]);
 
   register9RouterCatalog(
     catalog.draft,
     { apiKey: "secret-key", baseURL: "http://10.0.0.1:20128/v1" },
-    [{ id, reasoning: true, thinkingCanDisable: true }],
+    [{
+      id,
+      reasoning: true,
+      thinkingCanDisable: true,
+      contextLimit: 1_000_000,
+      outputLimit: 131_072,
+    }],
   );
 
   assert.deepEqual(catalog.providers.get("9router"), {
@@ -84,13 +159,12 @@ test("registers the exact V2 provider and model transport shape", () => {
     enabled: true,
     status: "active",
     variants: [
-      { id: "none", settings: { reasoningEffort: "none" } },
       { id: "minimal", settings: { reasoningEffort: "minimal" } },
       { id: "low", settings: { reasoningEffort: "low" } },
       { id: "medium", settings: { reasoningEffort: "medium" } },
       { id: "high", settings: { reasoningEffort: "high" } },
       { id: "xhigh", settings: { reasoningEffort: "xhigh" } },
-      { id: "max", settings: { reasoningEffort: "max" } },
     ],
+    limit: { context: 1_000_000, output: 131_072 },
   });
 });
