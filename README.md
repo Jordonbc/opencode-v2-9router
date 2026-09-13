@@ -48,10 +48,10 @@ All generated files remain inside the cloned repository. The project does not re
 
 ## Install from GitHub
 
-After the repository is published, replace `OWNER` and install its Git package specifier:
+Install the GitHub repository directly:
 
 ```sh
-opencode2 plugin add git+https://github.com/OWNER/opencode-9router-v2.git
+opencode2 plugin add git+https://github.com/Jordonbc/opencode-v2-9router.git
 ```
 
 Restart OpenCode, then verify each layer:
@@ -70,7 +70,7 @@ For a tool round trip, ask the selected model to use a harmless built-in tool, s
 Remove the same Git package specifier used for installation:
 
 ```sh
-opencode2 plugin remove git+https://github.com/OWNER/opencode-9router-v2.git
+opencode2 plugin remove git+https://github.com/Jordonbc/opencode-v2-9router.git
 ```
 
 Then restart OpenCode. Removing the plugin does not modify `~/.config/environment.d/9router.conf`.
@@ -99,4 +99,4 @@ npm run typecheck
 npm pack --dry-run
 ```
 
-Before publishing, add the real `repository`, `homepage`, `bugs`, and author metadata to `package.json`. Do not publish from an unverified OpenCode beta build.
+Do not publish from an unverified OpenCode beta build.

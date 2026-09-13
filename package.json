@@ -30,6 +30,15 @@
     "openai-compatible"
   ],
   "license": "MIT",
+  "author": "Jordonbc",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Jordonbc/opencode-v2-9router.git"
+  },
+  "homepage": "https://github.com/Jordonbc/opencode-v2-9router#readme",
+  "bugs": {
+    "url": "https://github.com/Jordonbc/opencode-v2-9router/issues"
+  },
   "engines": {
     "node": ">=20"
   },
