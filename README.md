@@ -34,7 +34,7 @@ OPENCODE_9ROUTER_API_KEY=your-key
 
 Environment variables override file values. Protect the file with `chmod 600 ~/.config/environment.d/9router.conf` and restart OpenCode after changing configuration.
 
-## Local development install
+## Develop locally
 
 ```sh
 git clone <your-repository-url> opencode-9router-v2
@@ -42,7 +42,16 @@ cd opencode-9router-v2
 npm ci
 npm run test
 npm run build
-ln -s "$PWD/dist/src/index.js" "${XDG_CONFIG_HOME:-$HOME/.config}/opencode/plugins/9router-v2.js"
+```
+
+All generated files remain inside the cloned repository. The project does not require or create a top-level wrapper or symlink in OpenCode's `plugins` directory.
+
+## Install from GitHub
+
+After the repository is published, replace `OWNER` and install its Git package specifier:
+
+```sh
+opencode2 plugin add git+https://github.com/OWNER/opencode-9router-v2.git
 ```
 
 Restart OpenCode, then verify each layer:
@@ -58,10 +67,10 @@ For a tool round trip, ask the selected model to use a harmless built-in tool, s
 
 ## Uninstall
 
-Remove the development link:
+Remove the same Git package specifier used for installation:
 
 ```sh
-unlink "${XDG_CONFIG_HOME:-$HOME/.config}/opencode/plugins/9router-v2.js"
+opencode2 plugin remove git+https://github.com/OWNER/opencode-9router-v2.git
 ```
 
 Then restart OpenCode. Removing the plugin does not modify `~/.config/environment.d/9router.conf`.
