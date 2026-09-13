@@ -82,7 +82,7 @@ const readFallback = async (path: string): Promise<Record<string, string>> => {
     return parseEnvironmentFile(await readFile(path, "utf8"));
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return {};
-    throw new ConfigError("Unable to read the 9router environment file");
+    throw new ConfigError(`Unable to read the 9router environment file at ${path}`);
   }
 };
 
