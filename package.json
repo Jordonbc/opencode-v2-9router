@@ -1,0 +1,46 @@
+{
+  "name": "opencode-9router-v2",
+  "version": "0.1.0",
+  "description": "Unofficial OpenCode V2 plugin for dynamic 9Router model discovery",
+  "type": "module",
+  "main": "./dist/src/index.js",
+  "types": "./dist/src/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/src/index.d.ts",
+      "import": "./dist/src/index.js"
+    }
+  },
+  "files": [
+    "dist/src",
+    "LICENSE",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "clean": "node --run clean:dist",
+    "clean:dist": "rimraf dist",
+    "test": "npm run build && node --test dist/tests/*.test.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "prepack": "npm run test && npm run typecheck"
+  },
+  "keywords": [
+    "opencode",
+    "opencode-v2",
+    "9router",
+    "plugin",
+    "openai-compatible"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@opencode-ai/plugin": "0.0.0-next-17444"
+  },
+  "devDependencies": {
+    "@types/node": "^24.3.0",
+    "rimraf": "^6.0.1",
+    "typescript": "^5.8.2"
+  }
+}
