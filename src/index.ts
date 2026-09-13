@@ -1,6 +1,6 @@
 import { Plugin } from "@opencode-ai/plugin";
 import { loadConfig, type ConfigResult } from "./config.js";
-import { discoverModels } from "./discovery.js";
+import { discoverModels, MAX_MODELS } from "./discovery.js";
 import { register9RouterCatalog } from "./provider.js";
 
 export const PLUGIN_ID = "opencode.9router";
@@ -9,6 +9,7 @@ type Dependencies = {
   readonly config: () => Promise<ConfigResult>;
   readonly discover: typeof discoverModels;
   readonly warn: (message: string) => void;
+  readonly info?: (message: string) => void;
 };
 
 const defaults: Dependencies = {
@@ -29,7 +30,13 @@ export const createPlugin = (dependencies: Dependencies = defaults): Plugin.Plug
 
       let models: Awaited<ReturnType<typeof discoverModels>>;
       try {
-        models = await dependencies.discover(result.value);
+        models = await dependencies.discover(result.value, {
+          onTruncated: (dropped) => {
+            dependencies.warn(
+              `opencode-9router-v2: ignoring ${dropped} model(s) beyond the ${MAX_MODELS} model limit`,
+            );
+          },
+        });
       } catch {
         dependencies.warn("opencode-9router-v2: model discovery failed; 9Router will be unavailable");
         return;
@@ -40,9 +47,16 @@ export const createPlugin = (dependencies: Dependencies = defaults): Plugin.Plug
         return;
       }
 
-      await catalog.transform((draft) => {
-        register9RouterCatalog(draft, result.value, models);
-      });
+      try {
+        await catalog.transform((draft) => {
+          register9RouterCatalog(draft, result.value, models);
+        });
+      } catch {
+        dependencies.warn("opencode-9router-v2: failed to register 9Router models; continuing without them");
+        return;
+      }
+
+      dependencies.info?.(`opencode-9router-v2: registered ${models.length} model(s) from 9Router`);
     },
   });
 

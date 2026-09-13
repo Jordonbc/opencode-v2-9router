@@ -14,6 +14,8 @@ export type DiscoveryOptions = {
   readonly maxBytes?: number;
   readonly maxModels?: number;
   readonly timeoutMs?: number;
+  /** Called when usable models are dropped because the payload exceeded maxModels. */
+  readonly onTruncated?: (dropped: number) => void;
 };
 
 export type DiscoveredModel = {
@@ -65,26 +67,35 @@ const parseModel = (item: unknown): DiscoveredModel | undefined => {
   };
 };
 
+export type DiscoveryResult = {
+  readonly models: DiscoveredModel[];
+  /** Usable models dropped because the payload exceeded maxModels. */
+  readonly dropped: number;
+};
+
 export const parseModelsPayload = (
   payload: unknown,
   maxModels = MAX_MODELS,
-): DiscoveredModel[] => {
+): DiscoveryResult => {
   if (!payload || typeof payload !== "object" || !Array.isArray((payload as { data?: unknown }).data)) {
     throw new DiscoveryError("9router returned an invalid /models response");
   }
 
   const data = (payload as { data: unknown[] }).data;
-  if (data.length > maxModels) {
-    throw new DiscoveryError(`9router returned more than ${maxModels} models`);
-  }
 
   const models = new Map<string, DiscoveredModel>();
+  let dropped = 0;
   for (const item of data) {
     const model = parseModel(item);
-    if (model && !models.has(model.id)) models.set(model.id, model);
+    if (!model || models.has(model.id)) continue;
+    if (models.size >= maxModels) {
+      dropped += 1;
+      continue;
+    }
+    models.set(model.id, model);
   }
 
-  return [...models.values()];
+  return { models: [...models.values()], dropped };
 };
 
 const readBoundedBody = async (response: Response, maxBytes: number): Promise<string> => {
@@ -106,7 +117,7 @@ const readBoundedBody = async (response: Response, maxBytes: number): Promise<st
 
       bytes += chunk.value.byteLength;
       if (bytes > maxBytes) {
-        await reader.cancel();
+        await reader.cancel().catch(() => undefined);
         throw new DiscoveryError("9router /models response is too large");
       }
       text += decoder.decode(chunk.value, { stream: true });
@@ -115,7 +126,12 @@ const readBoundedBody = async (response: Response, maxBytes: number): Promise<st
     reader.releaseLock();
     return result;
   } catch (error) {
-    reader.releaseLock();
+    await reader.cancel().catch(() => undefined);
+    try {
+      reader.releaseLock();
+    } catch {
+      // The reader may already be released after cancel on some runtimes.
+    }
     if (error instanceof DiscoveryError) throw error;
     throw new DiscoveryError("Unable to read the 9router /models response");
   }
@@ -129,6 +145,7 @@ export const discoverModels = async (
   const timeoutMs = options.timeoutMs ?? DEFAULT_DISCOVERY_TIMEOUT_MS;
   const maxBytes = options.maxBytes ?? MAX_DISCOVERY_BYTES;
   const maxModels = options.maxModels ?? MAX_MODELS;
+  const onTruncated = options.onTruncated;
   const signal = AbortSignal.timeout(timeoutMs);
 
   try {
@@ -153,7 +170,9 @@ export const discoverModels = async (
       throw new DiscoveryError("9router returned invalid JSON from /models");
     }
 
-    return parseModelsPayload(payload, maxModels);
+    const { models, dropped } = parseModelsPayload(payload, maxModels);
+    if (dropped > 0) onTruncated?.(dropped);
+    return models;
   } catch (error) {
     if (error instanceof DiscoveryError) throw error;
     if (signal.aborted) throw new DiscoveryError("9router model discovery timed out");
