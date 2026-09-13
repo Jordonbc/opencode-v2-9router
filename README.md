@@ -41,7 +41,7 @@ git clone <your-repository-url> opencode-9router-v2
 cd opencode-9router-v2
 npm ci
 npm run test
-npm run build
+npm run compile
 ```
 
 All generated files remain inside the cloned repository. The project does not require or create a top-level wrapper or symlink in OpenCode's `plugins` directory.
@@ -99,4 +99,6 @@ npm run typecheck
 npm pack --dry-run
 ```
 
-Do not publish from an unverified OpenCode beta build.
+The compiled `dist/src` entrypoint is committed intentionally so OpenCode can install the repository as a Git dependency without running package lifecycle scripts. CI recompiles it and rejects stale generated output.
+
+Do not publish from an unverified OpenCode beta build. Run `npm run release:check` before publishing.
