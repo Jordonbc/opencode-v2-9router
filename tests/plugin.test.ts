@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { ConfigError } from "../src/config.js";
-import { createPlugin, PLUGIN_ID } from "../src/index.js";
+import defaultPlugin, { createPlugin, PLUGIN_ID } from "../src/index.js";
 import type { CatalogDraft } from "../src/provider.js";
 import { PROVIDER_ID, PROVIDER_PACKAGE } from "../src/provider.js";
 
@@ -150,5 +150,41 @@ test("empty discovery warns and does not register", async () => {
   } as never);
 
   assert.equal(transforms, 0);
+  assert.deepEqual(warnings, ["opencode-9router-v2: /models returned no usable model IDs"]);
+});
+
+test("default export uses loadConfig, discoverModels, and console.warn", async () => {
+  assert.equal(defaultPlugin.id, PLUGIN_ID);
+  assert.equal(typeof defaultPlugin.setup, "function");
+});
+
+test("default dependencies warn through console.warn", async () => {
+  const savedURL = process.env.OPENCODE_9ROUTER_URL;
+  const savedKey = process.env.OPENCODE_9ROUTER_API_KEY;
+  const savedFetch = globalThis.fetch;
+  const savedWarn = console.warn;
+  const warnings: string[] = [];
+  process.env.OPENCODE_9ROUTER_URL = "http://router.test/v1";
+  process.env.OPENCODE_9ROUTER_API_KEY = "secret-key";
+  globalThis.fetch = (async () => new Response('{"data":[]}', { status: 200 })) as typeof fetch;
+  console.warn = (message?: unknown) => {
+    warnings.push(String(message));
+  };
+  try {
+    await createPlugin().setup({
+      catalog: {
+        transform: async () => {
+          throw new Error("should not register with no models");
+        },
+      },
+    } as never);
+  } finally {
+    if (savedURL === undefined) delete process.env.OPENCODE_9ROUTER_URL;
+    else process.env.OPENCODE_9ROUTER_URL = savedURL;
+    if (savedKey === undefined) delete process.env.OPENCODE_9ROUTER_API_KEY;
+    else process.env.OPENCODE_9ROUTER_API_KEY = savedKey;
+    globalThis.fetch = savedFetch;
+    console.warn = savedWarn;
+  }
   assert.deepEqual(warnings, ["opencode-9router-v2: /models returned no usable model IDs"]);
 });

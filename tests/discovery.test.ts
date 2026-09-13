@@ -419,6 +419,39 @@ test("tolerates a non-numeric declared content-length", async () => {
   assert.deepEqual(await discoverModels({ apiKey: "k", baseURL }, { fetch: fetcher }), []);
 });
 
+test("rejects a streamed body that exceeds the limit mid-read", async () => {
+  let cancelled = false;
+  let released = false;
+  const parts = [new Uint8Array([1, 2, 3]), new Uint8Array([4, 5, 6])];
+  let index = 0;
+  const fetcher: typeof fetch = async () =>
+    ({
+      ok: true,
+      status: 200,
+      headers: new Headers(),
+      body: {
+        getReader: () => ({
+          read: async () =>
+            index < parts.length
+              ? { done: false, value: parts[index++] as Uint8Array }
+              : { done: true, value: undefined },
+          cancel: async () => {
+            cancelled = true;
+          },
+          releaseLock: () => {
+            released = true;
+          },
+        }),
+      },
+    }) as unknown as Response;
+  await assert.rejects(
+    discoverModels({ apiKey: "k", baseURL }, { fetch: fetcher, maxBytes: 5 }),
+    /too large/u,
+  );
+  assert.equal(cancelled, true);
+  assert.equal(released, true);
+});
+
 test("wraps body read failures without leaking details", async () => {
   const fetcher: typeof fetch = async () =>
     ({

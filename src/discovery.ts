@@ -111,12 +111,13 @@ const readBoundedBody = async (response: Response, maxBytes: number): Promise<st
       }
       text += decoder.decode(chunk.value, { stream: true });
     }
-    return text + decoder.decode();
+    const result = text + decoder.decode();
+    reader.releaseLock();
+    return result;
   } catch (error) {
+    reader.releaseLock();
     if (error instanceof DiscoveryError) throw error;
     throw new DiscoveryError("Unable to read the 9router /models response");
-  } finally {
-    reader.releaseLock();
   }
 };
 
