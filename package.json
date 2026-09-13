@@ -19,6 +19,7 @@
   "scripts": {
     "compile": "tsc -p tsconfig.json",
     "test": "npm run compile && node --test dist/tests/*.test.js",
+    "coverage": "npm run compile && node --test --experimental-test-coverage dist/tests/*.test.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "release:check": "npm test && npm run typecheck && npm pack --dry-run"
   },
