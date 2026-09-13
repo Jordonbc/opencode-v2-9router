@@ -1,7 +1,15 @@
 import assert from "node:assert/strict";
 import { createServer, type Server } from "node:http";
 import test, { after, before } from "node:test";
-import { discoverModels, DiscoveryError, parseModelsPayload } from "../src/discovery.js";
+import {
+  DEFAULT_DISCOVERY_TIMEOUT_MS,
+  MAX_DISCOVERY_BYTES,
+  MAX_MODEL_ID_LENGTH,
+  MAX_MODELS,
+  discoverModels,
+  DiscoveryError,
+  parseModelsPayload,
+} from "../src/discovery.js";
 
 let server: Server;
 let baseURL: string;
@@ -59,7 +67,16 @@ after(async () => {
   });
 });
 
+test("exposes the documented discovery limits", () => {
+  assert.equal(DEFAULT_DISCOVERY_TIMEOUT_MS, 5_000);
+  assert.equal(MAX_DISCOVERY_BYTES, 1_048_576);
+  assert.equal(MAX_MODELS, 1_000);
+  assert.equal(MAX_MODEL_ID_LENGTH, 512);
+  assert.equal(new DiscoveryError("x").name, "DiscoveryError");
+});
+
 test("parses, filters, deduplicates, and preserves model IDs", () => {
+  const nulModel = `bad${String.fromCharCode(0)}model`;
   assert.deepEqual(
     parseModelsPayload({
       data: [
@@ -73,7 +90,7 @@ test("parses, filters, deduplicates, and preserves model IDs", () => {
         { id: "valid/model" },
         { id: "" },
         { id: " bad" },
-        { id: "bad\u0000model" },
+        { id: nulModel },
         {},
       ],
     }),
@@ -95,6 +112,127 @@ test("rejects malformed and over-count payloads", () => {
   assert.throws(() => parseModelsPayload({ data: [{ id: "a" }, { id: "b" }] }, 1), /more than 1/u);
 });
 
+test("rejects every non-object payload shape", () => {
+  for (const payload of [null, undefined, "data", 42, [], { data: null }, { data: "x" }, {}]) {
+    assert.throws(() => parseModelsPayload(payload), DiscoveryError);
+  }
+});
+
+test("accepts an empty model list and an exact maxModels boundary", () => {
+  assert.deepEqual(parseModelsPayload({ data: [] }), []);
+  assert.deepEqual(parseModelsPayload({ data: [{ id: "a" }] }, 1), [
+    { id: "a", reasoning: false, thinkingCanDisable: false },
+  ]);
+});
+
+test("skips non-object entries and keeps the first duplicate", () => {
+  assert.deepEqual(
+    parseModelsPayload({
+      data: [
+        null,
+        "model",
+        42,
+        ["nested"],
+        { id: "dup", context_length: 100 },
+        { id: "dup", context_length: 200 },
+        { id: "ok" },
+      ],
+    }),
+    [
+      { id: "dup", reasoning: false, thinkingCanDisable: false, contextLimit: 100 },
+      { id: "ok", reasoning: false, thinkingCanDisable: false },
+    ],
+  );
+});
+
+test("filters IDs with whitespace, control characters, or excessive length", () => {
+  const valid512 = "x".repeat(512);
+  const tabModel = `tab${String.fromCharCode(9)}here`;
+  const delModel = `del${String.fromCharCode(127)}here`;
+  assert.deepEqual(
+    parseModelsPayload({
+      data: [
+        { id: valid512 },
+        { id: "x".repeat(513) },
+        { id: "trailing " },
+        { id: " leading" },
+        { id: "inner space allowed" },
+        { id: tabModel },
+        { id: delModel },
+        { id: "trailing\n" },
+      ],
+    }),
+    [
+      { id: valid512, reasoning: false, thinkingCanDisable: false },
+      { id: "inner space allowed", reasoning: false, thinkingCanDisable: false },
+    ],
+  );
+});
+
+test("treats non-object or non-boolean capabilities as non-reasoning", () => {
+  assert.deepEqual(parseModelsPayload({ data: [{ id: "a", capabilities: "yes" }] }), [
+    { id: "a", reasoning: false, thinkingCanDisable: false },
+  ]);
+  assert.deepEqual(parseModelsPayload({ data: [{ id: "a", capabilities: null }] }), [
+    { id: "a", reasoning: false, thinkingCanDisable: false },
+  ]);
+  assert.deepEqual(parseModelsPayload({ data: [{ id: "a", capabilities: [] }] }), [
+    { id: "a", reasoning: false, thinkingCanDisable: false },
+  ]);
+  assert.deepEqual(
+    parseModelsPayload({
+      data: [{ id: "a", capabilities: { reasoning: "true", thinkingCanDisable: 1 } }],
+    }),
+    [{ id: "a", reasoning: false, thinkingCanDisable: false }],
+  );
+});
+
+test("prefers top-level token limits and falls back to capability fields", () => {
+  assert.deepEqual(
+    parseModelsPayload({
+      data: [
+        {
+          id: "both",
+          context_length: 100,
+          max_completion_tokens: 50,
+          capabilities: { contextWindow: 999, maxOutput: 888 },
+        },
+        {
+          id: "fallback",
+          context_length: 0,
+          max_completion_tokens: -5,
+          capabilities: { contextWindow: 500, maxOutput: 200 },
+        },
+        {
+          id: "invalid",
+          context_length: 2.5,
+          max_completion_tokens: "100",
+          capabilities: { contextWindow: Number.NaN, maxOutput: Number.MAX_SAFE_INTEGER + 1 },
+        },
+        { id: "none" },
+      ],
+    }),
+    [
+      {
+        id: "both",
+        reasoning: false,
+        thinkingCanDisable: false,
+        contextLimit: 100,
+        outputLimit: 50,
+      },
+      {
+        id: "fallback",
+        reasoning: false,
+        thinkingCanDisable: false,
+        contextLimit: 500,
+        outputLimit: 200,
+      },
+      { id: "invalid", reasoning: false, thinkingCanDisable: false },
+      { id: "none", reasoning: false, thinkingCanDisable: false },
+    ],
+  );
+});
+
 test("discovers models through a mock HTTP server with Bearer auth", async () => {
   const models = await discoverModels({ apiKey: "test-key", baseURL });
   assert.deepEqual(models, [
@@ -106,6 +244,80 @@ test("discovers models through a mock HTTP server with Bearer auth", async () =>
       outputLimit: 131_072,
     },
   ]);
+});
+
+test("sends the expected discovery request shape", async () => {
+  let seen: { input: unknown; init: RequestInit | undefined } | undefined;
+  const fetcher: typeof fetch = async (input, init) => {
+    seen = { input, init };
+    return new Response('{"data":[]}', { status: 200 });
+  };
+
+  assert.deepEqual(await discoverModels({ apiKey: "test-key", baseURL }, { fetch: fetcher }), []);
+  assert.equal(seen?.input, `${baseURL}/models`);
+  const headers = new Headers(seen?.init?.headers);
+  assert.equal(headers.get("accept"), "application/json");
+  assert.equal(headers.get("authorization"), "Bearer test-key");
+  assert.equal(seen?.init?.redirect, "error");
+  assert.ok(seen?.init?.signal instanceof AbortSignal);
+});
+
+test("returns an empty list when discovery finds no models", async () => {
+  const fetcher: typeof fetch = async () => new Response('{"data":[]}', { status: 200 });
+  assert.deepEqual(await discoverModels({ apiKey: "k", baseURL }, { fetch: fetcher }), []);
+});
+
+test("rejects invalid JSON without leaking the body or key", async () => {
+  const secret = "never-log-this-key";
+  const fetcher: typeof fetch = async () =>
+    new Response(`not json {{{ ${secret}`, { status: 200 });
+  await assert.rejects(
+    discoverModels({ apiKey: secret, baseURL }, { fetch: fetcher }),
+    (error: unknown) => {
+      assert.ok(error instanceof DiscoveryError);
+      assert.equal(error.message, "9router returned invalid JSON from /models");
+      assert.doesNotMatch(error.message, new RegExp(secret, "u"));
+      return true;
+    },
+  );
+});
+
+test("rejects an empty body as invalid JSON", async () => {
+  const fetcher: typeof fetch = async () => new Response("", { status: 200 });
+  await assert.rejects(
+    discoverModels({ apiKey: "k", baseURL }, { fetch: fetcher }),
+    /invalid JSON/u,
+  );
+});
+
+test("handles a null response body as invalid JSON", async () => {
+  const fetcher: typeof fetch = async () =>
+    ({ ok: true, status: 200, headers: new Headers(), body: null }) as unknown as Response;
+  await assert.rejects(
+    discoverModels({ apiKey: "k", baseURL }, { fetch: fetcher }),
+    /invalid JSON/u,
+  );
+});
+
+test("rejects an invalid payload shape from the server", async () => {
+  const fetcher: typeof fetch = async () => new Response('{"models":[]}', { status: 200 });
+  await assert.rejects(
+    discoverModels({ apiKey: "k", baseURL }, { fetch: fetcher }),
+    (error: unknown) => {
+      assert.ok(error instanceof DiscoveryError);
+      assert.match(error.message, /invalid \/models response/u);
+      return true;
+    },
+  );
+});
+
+test("enforces a custom maxModels option", async () => {
+  const fetcher: typeof fetch = async () =>
+    new Response('{"data":[{"id":"a"},{"id":"b"}]}', { status: 200 });
+  await assert.rejects(
+    discoverModels({ apiKey: "k", baseURL }, { fetch: fetcher, maxModels: 1 }),
+    /more than 1/u,
+  );
 });
 
 test("times out discovery without leaking the API key", async () => {
@@ -126,6 +338,23 @@ test("times out discovery without leaking the API key", async () => {
   );
 });
 
+test("wraps fetch failures without leaking exception text", async () => {
+  const secret = "never-log-this-key";
+  const fetcher: typeof fetch = async () => {
+    throw new TypeError(`boom containing ${secret}`);
+  };
+  await assert.rejects(
+    discoverModels({ apiKey: secret, baseURL }, { fetch: fetcher, timeoutMs: 5_000 }),
+    (error: unknown) => {
+      assert.ok(error instanceof DiscoveryError);
+      assert.equal(error.message, "9router model discovery failed");
+      assert.doesNotMatch(error.message, new RegExp(secret, "u"));
+      assert.doesNotMatch(error.message, /boom/u);
+      return true;
+    },
+  );
+});
+
 test("does not include response content or the API key in HTTP errors", async () => {
   await assert.rejects(
     discoverModels({ apiKey: "wrong-key", baseURL }),
@@ -138,10 +367,81 @@ test("does not include response content or the API key in HTTP errors", async ()
   );
 });
 
+test("reports other HTTP statuses without the body", async () => {
+  const fetcher: typeof fetch = async () => new Response("secret-body", { status: 500 });
+  await assert.rejects(
+    discoverModels({ apiKey: "k", baseURL }, { fetch: fetcher }),
+    (error: unknown) => {
+      assert.ok(error instanceof DiscoveryError);
+      assert.equal(error.message, "9router model discovery returned HTTP 500");
+      assert.doesNotMatch(error.message, /secret-body/u);
+      return true;
+    },
+  );
+});
+
 test("caps the response body size", async () => {
   const fetcher: typeof fetch = async () => new Response('{"data":[]}', { status: 200 });
   await assert.rejects(
     discoverModels({ apiKey: "test-key", baseURL }, { fetch: fetcher, maxBytes: 5 }),
     /too large/u,
+  );
+});
+
+test("rejects an oversized declared content-length before reading", async () => {
+  const fetcher: typeof fetch = async () =>
+    new Response("x".repeat(100), {
+      status: 200,
+      headers: { "content-length": "100" },
+    });
+  await assert.rejects(
+    discoverModels({ apiKey: "k", baseURL }, { fetch: fetcher, maxBytes: 5 }),
+    /too large/u,
+  );
+});
+
+test("accepts a declared content-length at exactly the limit", async () => {
+  const body = '{"data":[]}';
+  const fetcher: typeof fetch = async () =>
+    new Response(body, {
+      status: 200,
+      headers: { "content-length": String(new TextEncoder().encode(body).byteLength) },
+    });
+  assert.deepEqual(
+    await discoverModels({ apiKey: "k", baseURL }, { fetch: fetcher, maxBytes: 1_048_576 }),
+    [],
+  );
+});
+
+test("tolerates a non-numeric declared content-length", async () => {
+  const fetcher: typeof fetch = async () =>
+    new Response('{"data":[]}', { status: 200, headers: { "content-length": "unknown" } });
+  assert.deepEqual(await discoverModels({ apiKey: "k", baseURL }, { fetch: fetcher }), []);
+});
+
+test("wraps body read failures without leaking details", async () => {
+  const fetcher: typeof fetch = async () =>
+    ({
+      ok: true,
+      status: 200,
+      headers: new Headers(),
+      body: {
+        getReader: () => ({
+          read: async () => {
+            throw new Error("boom with secret-body");
+          },
+          cancel: async () => undefined,
+          releaseLock: () => undefined,
+        }),
+      },
+    }) as unknown as Response;
+  await assert.rejects(
+    discoverModels({ apiKey: "k", baseURL }, { fetch: fetcher }),
+    (error: unknown) => {
+      assert.ok(error instanceof DiscoveryError);
+      assert.equal(error.message, "Unable to read the 9router /models response");
+      assert.doesNotMatch(error.message, /boom|secret-body/u);
+      return true;
+    },
   );
 });
