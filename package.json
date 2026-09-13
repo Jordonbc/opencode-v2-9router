@@ -18,8 +18,6 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "clean": "node --run clean:dist",
-    "clean:dist": "rimraf dist",
     "test": "npm run build && node --test dist/tests/*.test.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "prepack": "npm run test && npm run typecheck"
@@ -40,7 +38,6 @@
   },
   "devDependencies": {
     "@types/node": "^24.3.0",
-    "rimraf": "^6.0.1",
     "typescript": "^5.8.2"
   }
 }

@@ -42,13 +42,12 @@ cd opencode-9router-v2
 npm ci
 npm run test
 npm run build
-opencode2 plugin add "$PWD"
+ln -s "$PWD/dist/src/index.js" "${XDG_CONFIG_HOME:-$HOME/.config}/opencode/plugins/9router-v2.js"
 ```
 
 Restart OpenCode, then verify each layer:
 
 ```sh
-opencode2 plugin list
 opencode2 models --standalone | grep '^9router/'
 opencode2 run --standalone --model 9router/ocg/muse-spark-1.3-contributor Hello
 ```
@@ -59,10 +58,10 @@ For a tool round trip, ask the selected model to use a harmless built-in tool, s
 
 ## Uninstall
 
-Use the exact package or absolute directory specifier shown by `opencode2 plugin list`:
+Remove the development link:
 
 ```sh
-opencode2 plugin remove /absolute/path/to/opencode-9router-v2
+unlink "${XDG_CONFIG_HOME:-$HOME/.config}/opencode/plugins/9router-v2.js"
 ```
 
 Then restart OpenCode. Removing the plugin does not modify `~/.config/environment.d/9router.conf`.
@@ -71,7 +70,7 @@ Then restart OpenCode. Removing the plugin does not modify `~/.config/environmen
 
 This is not a V1 config-hook plugin. Its default export is a V2 definition with an `id` and `setup` function from `@opencode-ai/plugin`. Setup registers a replayable `catalog.transform`.
 
-The provider and every discovered model set `package` to `@ai-sdk/openai-compatible`. Provider `settings.baseURL` selects the configured gateway, while `settings.apiKey` is resolved by OpenCode's compatible-provider transport into `Authorization: Bearer <key>`. Each model's catalog key remains its full discovered route and `modelID` repeats that exact value, which is the identifier sent upstream. These fields are required by the beta-19425 resolver; the older `model.api` shape belongs to a different V2 snapshot.
+The provider and every discovered model set `package` to `aisdk:@ai-sdk/openai-compatible`. The `aisdk:` catalog discriminator selects OpenCode's AI SDK resolver, which normalizes the remainder to the official OpenAI-compatible provider package. Provider `settings.baseURL` selects the configured gateway, while `settings.apiKey` is resolved by that transport into `Authorization: Bearer <key>`. Each model's catalog key remains its full discovered route and `modelID` repeats that exact value, which is the identifier sent upstream. These fields are required by the beta-19425 resolver; the older `model.api` shape belongs to a different V2 snapshot.
 
 Unknown context limits, pricing, reasoning, and modality metadata are left at the SDK's defaults rather than invented.
 

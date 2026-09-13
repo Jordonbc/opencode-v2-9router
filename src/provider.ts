@@ -3,7 +3,7 @@ import type { RouterConfig } from "./config.js";
 
 export const PROVIDER_ID = "9router";
 export const PROVIDER_NAME = "9Router";
-export const PROVIDER_PACKAGE = "@ai-sdk/openai-compatible";
+export const PROVIDER_PACKAGE = "aisdk:@ai-sdk/openai-compatible";
 
 export type CatalogDraft = Parameters<
   Parameters<Plugin.Context["catalog"]["transform"]>[0]
