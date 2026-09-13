@@ -3,16 +3,16 @@
   "version": "0.1.0",
   "description": "Unofficial OpenCode V2 plugin for dynamic 9Router model discovery",
   "type": "module",
-  "main": "./dist/src/index.js",
-  "types": "./dist/src/index.d.ts",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
   "exports": {
     ".": {
-      "types": "./dist/src/index.d.ts",
-      "import": "./dist/src/index.js"
+      "types": "./src/index.ts",
+      "import": "./src/index.ts"
     }
   },
   "files": [
-    "dist/src",
+    "src",
     "LICENSE",
     "README.md"
   ],

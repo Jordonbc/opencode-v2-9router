@@ -99,6 +99,6 @@ npm run typecheck
 npm pack --dry-run
 ```
 
-The compiled `dist/src` entrypoint is committed intentionally so OpenCode can install the repository as a Git dependency without running package lifecycle scripts. CI recompiles it and rejects stale generated output.
+The package ships its TypeScript source entrypoint directly to OpenCode's Bun-based V2 runtime. Development compilation and release checks use explicit script names so installing the Git dependency does not execute package lifecycle scripts.
 
 Do not publish from an unverified OpenCode beta build. Run `npm run release:check` before publishing.
