@@ -34,7 +34,14 @@ before(async () => {
     response.end("test-key must never appear in an error");
   });
 
-  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  await new Promise<void>((resolve, reject) => {
+    const onError = (error: Error) => reject(error);
+    server.once("error", onError);
+    server.listen(0, "127.0.0.1", () => {
+      server.off("error", onError);
+      resolve();
+    });
+  });
   const address = server.address();
   if (!address || typeof address === "string") throw new Error("Mock server did not bind to TCP");
   baseURL = `http://127.0.0.1:${address.port}/v1`;
