@@ -21,7 +21,7 @@ It does not execute commands, scan projects, cache results, or contact metadata 
 The URL must end in `/v1`:
 
 ```sh
-export OPENCODE_9ROUTER_URL="http://10.0.0.1:20128/v1"
+export OPENCODE_9ROUTER_URL="http://127.0.0.1:20128/v1"
 export OPENCODE_9ROUTER_API_KEY="your-key"
 ```
 
@@ -29,7 +29,7 @@ On Linux, the plugin can instead read:
 
 ```ini
 # ~/.config/environment.d/9router.conf
-OPENCODE_9ROUTER_URL=http://10.0.0.1:20128/v1
+OPENCODE_9ROUTER_URL=http://127.0.0.1:20128/v1
 OPENCODE_9ROUTER_API_KEY=your-key
 ```
 
@@ -90,7 +90,7 @@ The plugin copies `context_length` and `max_completion_tokens` from 9Router's li
 
 - Only `http:` and `https:` base URLs ending in `/v1` are accepted.
 - Embedded URL credentials, query strings, fragments, and redirects are rejected.
-- Discovery is limited to 1 MiB, 1,000 models, and five seconds.
+- Discovery is limited to 1 MiB and five seconds; payloads beyond 1,000 models register the first 1,000 with a warning.
 - Model IDs with surrounding whitespace, control characters, or excessive length are ignored.
 - Response bodies and caught exception text are never logged.
 
@@ -99,6 +99,7 @@ The plugin copies `context_length` and `max_completion_tokens` from 9Router's li
 ```sh
 npm test
 npm run typecheck
+npm run coverage
 npm pack --dry-run
 ```
 
