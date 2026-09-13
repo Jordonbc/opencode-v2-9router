@@ -9,7 +9,13 @@ test("exports a native V2 default definition", async () => {
       ok: true,
       value: { apiKey: "secret-key", baseURL: "http://router.test/v1" },
     }),
-    discover: async () => ["ocg/muse-spark-1.3-contributor"],
+    discover: async () => [
+      {
+        id: "ocg/muse-spark-1.3-contributor",
+        reasoning: true,
+        thinkingCanDisable: true,
+      },
+    ],
     warn: () => undefined,
   });
 

@@ -16,13 +16,40 @@ export type DiscoveryOptions = {
   readonly timeoutMs?: number;
 };
 
+export type DiscoveredModel = {
+  readonly id: string;
+  readonly reasoning: boolean;
+  readonly thinkingCanDisable: boolean;
+};
+
 const isModelID = (value: unknown): value is string => {
   if (typeof value !== "string") return false;
   if (!value || value !== value.trim() || value.length > MAX_MODEL_ID_LENGTH) return false;
   return !/[\u0000-\u001f\u007f]/u.test(value);
 };
 
-export const parseModelsPayload = (payload: unknown, maxModels = MAX_MODELS): string[] => {
+const parseModel = (item: unknown): DiscoveredModel | undefined => {
+  if (!item || typeof item !== "object") return undefined;
+
+  const model = item as { id?: unknown; capabilities?: unknown };
+  if (!isModelID(model.id)) return undefined;
+
+  const capabilities =
+    model.capabilities && typeof model.capabilities === "object"
+      ? (model.capabilities as Record<string, unknown>)
+      : {};
+
+  return {
+    id: model.id,
+    reasoning: capabilities.reasoning === true,
+    thinkingCanDisable: capabilities.thinkingCanDisable === true,
+  };
+};
+
+export const parseModelsPayload = (
+  payload: unknown,
+  maxModels = MAX_MODELS,
+): DiscoveredModel[] => {
   if (!payload || typeof payload !== "object" || !Array.isArray((payload as { data?: unknown }).data)) {
     throw new DiscoveryError("9router returned an invalid /models response");
   }
@@ -32,14 +59,13 @@ export const parseModelsPayload = (payload: unknown, maxModels = MAX_MODELS): st
     throw new DiscoveryError(`9router returned more than ${maxModels} models`);
   }
 
-  const seen = new Set<string>();
+  const models = new Map<string, DiscoveredModel>();
   for (const item of data) {
-    if (!item || typeof item !== "object") continue;
-    const id = (item as { id?: unknown }).id;
-    if (isModelID(id)) seen.add(id);
+    const model = parseModel(item);
+    if (model && !models.has(model.id)) models.set(model.id, model);
   }
 
-  return [...seen];
+  return [...models.values()];
 };
 
 const readBoundedBody = async (response: Response, maxBytes: number): Promise<string> => {
@@ -78,7 +104,7 @@ const readBoundedBody = async (response: Response, maxBytes: number): Promise<st
 export const discoverModels = async (
   config: RouterConfig,
   options: DiscoveryOptions = {},
-): Promise<string[]> => {
+): Promise<DiscoveredModel[]> => {
   const fetcher = options.fetch ?? globalThis.fetch;
   const timeoutMs = options.timeoutMs ?? DEFAULT_DISCOVERY_TIMEOUT_MS;
   const maxBytes = options.maxBytes ?? MAX_DISCOVERY_BYTES;

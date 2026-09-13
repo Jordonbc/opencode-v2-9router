@@ -14,7 +14,10 @@ before(async () => {
         JSON.stringify({
           data: [
             { id: "ocg/muse-spark-1.3-contributor" },
-            { id: "ocg/muse-spark-1.3-contributor" },
+            {
+              id: "ocg/muse-spark-1.3-contributor",
+              capabilities: { reasoning: true, thinkingCanDisable: true },
+            },
             { id: "" },
             { id: " bad" },
             { id: "bad\nmodel" },
@@ -58,7 +61,10 @@ test("parses, filters, deduplicates, and preserves model IDs", () => {
   assert.deepEqual(
     parseModelsPayload({
       data: [
-        { id: "ocg/muse-spark-1.3-contributor" },
+        {
+          id: "ocg/muse-spark-1.3-contributor",
+          capabilities: { reasoning: true, thinkingCanDisable: true },
+        },
         { id: "ocg/muse-spark-1.3-contributor" },
         { id: "valid/model" },
         { id: "" },
@@ -67,7 +73,14 @@ test("parses, filters, deduplicates, and preserves model IDs", () => {
         {},
       ],
     }),
-    ["ocg/muse-spark-1.3-contributor", "valid/model"],
+    [
+      {
+        id: "ocg/muse-spark-1.3-contributor",
+        reasoning: true,
+        thinkingCanDisable: true,
+      },
+      { id: "valid/model", reasoning: false, thinkingCanDisable: false },
+    ],
   );
 });
 
@@ -78,7 +91,13 @@ test("rejects malformed and over-count payloads", () => {
 
 test("discovers models through a mock HTTP server with Bearer auth", async () => {
   const models = await discoverModels({ apiKey: "test-key", baseURL });
-  assert.deepEqual(models, ["ocg/muse-spark-1.3-contributor"]);
+  assert.deepEqual(models, [
+    {
+      id: "ocg/muse-spark-1.3-contributor",
+      reasoning: false,
+      thinkingCanDisable: false,
+    },
+  ]);
 });
 
 test("times out discovery without leaking the API key", async () => {

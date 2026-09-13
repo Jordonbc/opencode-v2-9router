@@ -10,6 +10,7 @@ OpenCode V2 is still a preview. Re-check the plugin SDK contract before upgradin
 - Falls back per missing variable to `~/.config/environment.d/9router.conf`.
 - Calls `GET <baseURL>/models` once at plugin setup with Bearer authentication.
 - Registers provider `9router` as `9Router` and preserves upstream IDs exactly.
+- Exposes OpenCode reasoning variants for models whose live 9Router metadata advertises reasoning.
 - Routes each model through `@ai-sdk/openai-compatible` using the configured `/v1` base URL.
 - Warns once and lets OpenCode continue if configuration or discovery fails.
 
@@ -81,7 +82,9 @@ This is not a V1 config-hook plugin. Its default export is a V2 definition with 
 
 The provider and every discovered model set `package` to `aisdk:@ai-sdk/openai-compatible`. The `aisdk:` catalog discriminator selects OpenCode's AI SDK resolver, which normalizes the remainder to the official OpenAI-compatible provider package. Provider `settings.baseURL` selects the configured gateway, while `settings.apiKey` is resolved by that transport into `Authorization: Bearer <key>`. Each model's catalog key remains its full discovered route and `modelID` repeats that exact value, which is the identifier sent upstream. These fields are required by the beta-19425 resolver; the older `model.api` shape belongs to a different V2 snapshot.
 
-Unknown context limits, pricing, reasoning, and modality metadata are left at the SDK's defaults rather than invented.
+Reasoning models receive `minimal`, `low`, `medium`, `high`, `xhigh`, and `max` variants. Models that advertise `thinkingCanDisable` also receive `none`. Each variant sends OpenAI-compatible `reasoning_effort`, which 9Router translates or clamps for the selected upstream. Models that do not advertise reasoning receive no reasoning variants.
+
+Unknown pricing and other metadata remain at the SDK's defaults rather than being invented.
 
 ## Security boundaries
 

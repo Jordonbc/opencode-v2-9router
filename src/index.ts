@@ -27,21 +27,21 @@ export const createPlugin = (dependencies: Dependencies = defaults): Plugin.Plug
         return;
       }
 
-      let modelIDs: string[];
+      let models: Awaited<ReturnType<typeof discoverModels>>;
       try {
-        modelIDs = await dependencies.discover(result.value);
+        models = await dependencies.discover(result.value);
       } catch {
         dependencies.warn("opencode-9router-v2: model discovery failed; 9Router will be unavailable");
         return;
       }
 
-      if (modelIDs.length === 0) {
+      if (models.length === 0) {
         dependencies.warn("opencode-9router-v2: /models returned no usable model IDs");
         return;
       }
 
       await catalog.transform((draft) => {
-        register9RouterCatalog(draft, result.value, modelIDs);
+        register9RouterCatalog(draft, result.value, models);
       });
     },
   });

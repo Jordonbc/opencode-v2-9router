@@ -4,6 +4,7 @@ import type { CatalogDraft } from "../src/provider.js";
 import {
   displayName,
   PROVIDER_PACKAGE,
+  reasoningVariants,
   register9RouterCatalog,
 } from "../src/provider.js";
 
@@ -42,6 +43,19 @@ test("creates a human-friendly name without changing the route ID", () => {
   assert.equal(displayName("ocg/muse-spark-1.3-contributor"), "Muse Spark 1.3 Contributor");
 });
 
+test("creates selectable reasoning efforts only for advertised reasoning models", () => {
+  assert.deepEqual(reasoningVariants({ reasoning: false, thinkingCanDisable: true }), []);
+  assert.deepEqual(reasoningVariants({ reasoning: true, thinkingCanDisable: false }), [
+    { id: "minimal", settings: { reasoningEffort: "minimal" } },
+    { id: "low", settings: { reasoningEffort: "low" } },
+    { id: "medium", settings: { reasoningEffort: "medium" } },
+    { id: "high", settings: { reasoningEffort: "high" } },
+    { id: "xhigh", settings: { reasoningEffort: "xhigh" } },
+    { id: "max", settings: { reasoningEffort: "max" } },
+  ]);
+  assert.equal(reasoningVariants({ reasoning: true, thinkingCanDisable: true })[0]?.id, "none");
+});
+
 test("registers the exact V2 provider and model transport shape", () => {
   const catalog = createCatalog();
   const id = "ocg/muse-spark-1.3-contributor";
@@ -49,7 +63,7 @@ test("registers the exact V2 provider and model transport shape", () => {
   register9RouterCatalog(
     catalog.draft,
     { apiKey: "secret-key", baseURL: "http://10.0.0.1:20128/v1" },
-    [id],
+    [{ id, reasoning: true, thinkingCanDisable: true }],
   );
 
   assert.deepEqual(catalog.providers.get("9router"), {
@@ -69,5 +83,14 @@ test("registers the exact V2 provider and model transport shape", () => {
     package: PROVIDER_PACKAGE,
     enabled: true,
     status: "active",
+    variants: [
+      { id: "none", settings: { reasoningEffort: "none" } },
+      { id: "minimal", settings: { reasoningEffort: "minimal" } },
+      { id: "low", settings: { reasoningEffort: "low" } },
+      { id: "medium", settings: { reasoningEffort: "medium" } },
+      { id: "high", settings: { reasoningEffort: "high" } },
+      { id: "xhigh", settings: { reasoningEffort: "xhigh" } },
+      { id: "max", settings: { reasoningEffort: "max" } },
+    ],
   });
 });
