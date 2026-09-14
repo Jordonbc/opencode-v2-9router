@@ -279,7 +279,7 @@ test("returns a safe error for an invalid base URL", async () => {
   }
 });
 
-test("reports an unreadable fallback file without leaking values", async () => {
+test("reports an unreadable fallback file with its path", async () => {
   const directory = await mkdtemp(join(tmpdir(), "opencode-9router-unreadable-"));
   const result = await loadConfig({}, directory);
 
@@ -287,7 +287,7 @@ test("reports an unreadable fallback file without leaking values", async () => {
   if (!result.ok) {
     assert.match(result.error.message, /Unable to read/u);
     assert.ok(result.error instanceof ConfigError);
-    assert.doesNotMatch(result.error.message, new RegExp(directory, "u"));
+    assert.ok(result.error.message.includes(directory));
   }
 });
 

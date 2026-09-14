@@ -16,6 +16,7 @@ const defaults: Dependencies = {
   config: loadConfig,
   discover: discoverModels,
   warn: (message) => console.warn(message),
+  info: (message) => console.info(message),
 };
 
 export const createPlugin = (dependencies: Dependencies = defaults): Plugin.Plugin =>

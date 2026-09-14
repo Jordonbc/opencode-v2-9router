@@ -94,22 +94,44 @@ test("parses, filters, deduplicates, and preserves model IDs", () => {
         {},
       ],
     }),
-    [
-      {
-        id: "ocg/muse-spark-1.3-contributor",
-        reasoning: true,
-        thinkingCanDisable: true,
-        contextLimit: 1_000_000,
-        outputLimit: 131_072,
-      },
-      { id: "valid/model", reasoning: false, thinkingCanDisable: false },
-    ],
+    {
+      models: [
+        {
+          id: "ocg/muse-spark-1.3-contributor",
+          reasoning: true,
+          thinkingCanDisable: true,
+          contextLimit: 1_000_000,
+          outputLimit: 131_072,
+        },
+        { id: "valid/model", reasoning: false, thinkingCanDisable: false },
+      ],
+      dropped: 0,
+    },
   );
 });
 
-test("rejects malformed and over-count payloads", () => {
+test("rejects malformed payloads", () => {
   assert.throws(() => parseModelsPayload({ models: [] }), DiscoveryError);
-  assert.throws(() => parseModelsPayload({ data: [{ id: "a" }, { id: "b" }] }, 1), /more than 1/u);
+});
+
+test("truncates payloads beyond maxModels instead of failing", () => {
+  const result = parseModelsPayload({ data: [{ id: "a" }, { id: "b" }, { id: "c" }] }, 2);
+  assert.deepEqual(result.models, [
+    { id: "a", reasoning: false, thinkingCanDisable: false },
+    { id: "b", reasoning: false, thinkingCanDisable: false },
+  ]);
+  assert.equal(result.dropped, 1);
+
+  // Duplicates of already-kept IDs don't count as dropped.
+  const withDupes = parseModelsPayload(
+    { data: [{ id: "a" }, { id: "b" }, { id: "a" }, { id: "bad\n" }, { id: "c" }] },
+    2,
+  );
+  assert.deepEqual(
+    withDupes.models.map((model) => model.id),
+    ["a", "b"],
+  );
+  assert.equal(withDupes.dropped, 1);
 });
 
 test("rejects every non-object payload shape", () => {
@@ -119,10 +141,11 @@ test("rejects every non-object payload shape", () => {
 });
 
 test("accepts an empty model list and an exact maxModels boundary", () => {
-  assert.deepEqual(parseModelsPayload({ data: [] }), []);
-  assert.deepEqual(parseModelsPayload({ data: [{ id: "a" }] }, 1), [
-    { id: "a", reasoning: false, thinkingCanDisable: false },
-  ]);
+  assert.deepEqual(parseModelsPayload({ data: [] }), { models: [], dropped: 0 });
+  assert.deepEqual(parseModelsPayload({ data: [{ id: "a" }] }, 1), {
+    models: [{ id: "a", reasoning: false, thinkingCanDisable: false }],
+    dropped: 0,
+  });
 });
 
 test("skips non-object entries and keeps the first duplicate", () => {
@@ -138,10 +161,13 @@ test("skips non-object entries and keeps the first duplicate", () => {
         { id: "ok" },
       ],
     }),
-    [
-      { id: "dup", reasoning: false, thinkingCanDisable: false, contextLimit: 100 },
-      { id: "ok", reasoning: false, thinkingCanDisable: false },
-    ],
+    {
+      models: [
+        { id: "dup", reasoning: false, thinkingCanDisable: false, contextLimit: 100 },
+        { id: "ok", reasoning: false, thinkingCanDisable: false },
+      ],
+      dropped: 0,
+    },
   );
 });
 
@@ -162,28 +188,37 @@ test("filters IDs with whitespace, control characters, or excessive length", () 
         { id: "trailing\n" },
       ],
     }),
-    [
-      { id: valid512, reasoning: false, thinkingCanDisable: false },
-      { id: "inner space allowed", reasoning: false, thinkingCanDisable: false },
-    ],
+    {
+      models: [
+        { id: valid512, reasoning: false, thinkingCanDisable: false },
+        { id: "inner space allowed", reasoning: false, thinkingCanDisable: false },
+      ],
+      dropped: 0,
+    },
   );
 });
 
 test("treats non-object or non-boolean capabilities as non-reasoning", () => {
-  assert.deepEqual(parseModelsPayload({ data: [{ id: "a", capabilities: "yes" }] }), [
-    { id: "a", reasoning: false, thinkingCanDisable: false },
-  ]);
-  assert.deepEqual(parseModelsPayload({ data: [{ id: "a", capabilities: null }] }), [
-    { id: "a", reasoning: false, thinkingCanDisable: false },
-  ]);
-  assert.deepEqual(parseModelsPayload({ data: [{ id: "a", capabilities: [] }] }), [
-    { id: "a", reasoning: false, thinkingCanDisable: false },
-  ]);
+  assert.deepEqual(parseModelsPayload({ data: [{ id: "a", capabilities: "yes" }] }), {
+    models: [{ id: "a", reasoning: false, thinkingCanDisable: false }],
+    dropped: 0,
+  });
+  assert.deepEqual(parseModelsPayload({ data: [{ id: "a", capabilities: null }] }), {
+    models: [{ id: "a", reasoning: false, thinkingCanDisable: false }],
+    dropped: 0,
+  });
+  assert.deepEqual(parseModelsPayload({ data: [{ id: "a", capabilities: [] }] }), {
+    models: [{ id: "a", reasoning: false, thinkingCanDisable: false }],
+    dropped: 0,
+  });
   assert.deepEqual(
     parseModelsPayload({
       data: [{ id: "a", capabilities: { reasoning: "true", thinkingCanDisable: 1 } }],
     }),
-    [{ id: "a", reasoning: false, thinkingCanDisable: false }],
+    {
+      models: [{ id: "a", reasoning: false, thinkingCanDisable: false }],
+      dropped: 0,
+    },
   );
 });
 
@@ -212,24 +247,27 @@ test("prefers top-level token limits and falls back to capability fields", () =>
         { id: "none" },
       ],
     }),
-    [
-      {
-        id: "both",
-        reasoning: false,
-        thinkingCanDisable: false,
-        contextLimit: 100,
-        outputLimit: 50,
-      },
-      {
-        id: "fallback",
-        reasoning: false,
-        thinkingCanDisable: false,
-        contextLimit: 500,
-        outputLimit: 200,
-      },
-      { id: "invalid", reasoning: false, thinkingCanDisable: false },
-      { id: "none", reasoning: false, thinkingCanDisable: false },
-    ],
+    {
+      models: [
+        {
+          id: "both",
+          reasoning: false,
+          thinkingCanDisable: false,
+          contextLimit: 100,
+          outputLimit: 50,
+        },
+        {
+          id: "fallback",
+          reasoning: false,
+          thinkingCanDisable: false,
+          contextLimit: 500,
+          outputLimit: 200,
+        },
+        { id: "invalid", reasoning: false, thinkingCanDisable: false },
+        { id: "none", reasoning: false, thinkingCanDisable: false },
+      ],
+      dropped: 0,
+    },
   );
 });
 
@@ -311,13 +349,25 @@ test("rejects an invalid payload shape from the server", async () => {
   );
 });
 
-test("enforces a custom maxModels option", async () => {
+test("truncates via a custom maxModels option and reports the count", async () => {
   const fetcher: typeof fetch = async () =>
     new Response('{"data":[{"id":"a"},{"id":"b"}]}', { status: 200 });
-  await assert.rejects(
-    discoverModels({ apiKey: "k", baseURL }, { fetch: fetcher, maxModels: 1 }),
-    /more than 1/u,
+  const seen: number[] = [];
+  assert.deepEqual(
+    await discoverModels(
+      { apiKey: "k", baseURL },
+      { fetch: fetcher, maxModels: 1, onTruncated: (dropped) => seen.push(dropped) },
+    ),
+    [{ id: "a", reasoning: false, thinkingCanDisable: false }],
   );
+  assert.deepEqual(seen, [1]);
+
+  const silent: number[] = [];
+  await discoverModels(
+    { apiKey: "k", baseURL },
+    { fetch: fetcher, maxModels: 5, onTruncated: (dropped) => silent.push(dropped) },
+  );
+  assert.deepEqual(silent, []);
 });
 
 test("times out discovery without leaking the API key", async () => {
@@ -419,37 +469,44 @@ test("tolerates a non-numeric declared content-length", async () => {
   assert.deepEqual(await discoverModels({ apiKey: "k", baseURL }, { fetch: fetcher }), []);
 });
 
-test("rejects a streamed body that exceeds the limit mid-read", async () => {
-  let cancelled = false;
-  let released = false;
-  const parts = [new Uint8Array([1, 2, 3]), new Uint8Array([4, 5, 6])];
-  let index = 0;
-  const fetcher: typeof fetch = async () =>
-    ({
-      ok: true,
-      status: 200,
-      headers: new Headers(),
-      body: {
-        getReader: () => ({
-          read: async () =>
-            index < parts.length
-              ? { done: false, value: parts[index++] as Uint8Array }
-              : { done: true, value: undefined },
-          cancel: async () => {
-            cancelled = true;
-          },
-          releaseLock: () => {
-            released = true;
-          },
-        }),
-      },
-    }) as unknown as Response;
-  await assert.rejects(
-    discoverModels({ apiKey: "k", baseURL }, { fetch: fetcher, maxBytes: 5 }),
-    /too large/u,
-  );
-  assert.equal(cancelled, true);
-  assert.equal(released, true);
+test("cancels an oversized stream and a failing stream", async () => {
+  for (const maxBytes of [5, 1_048_576]) {
+    let cancelled = false;
+    let released = false;
+    const parts = [new Uint8Array([1, 2, 3]), new Uint8Array([4, 5, 6])];
+    let index = 0;
+    const fetcher: typeof fetch = async () =>
+      ({
+        ok: true,
+        status: 200,
+        headers: new Headers(),
+        body: {
+          getReader: () => ({
+            read: async () => {
+              if (maxBytes < 1_048_576) {
+                return index < parts.length
+                  ? { done: false, value: parts[index++] as Uint8Array }
+                  : { done: true, value: undefined };
+              }
+              // 0xFF is invalid UTF-8 and trips the fatal decoder.
+              return { done: false, value: new Uint8Array([0xff]) };
+            },
+            cancel: async () => {
+              cancelled = true;
+            },
+            releaseLock: () => {
+              released = true;
+            },
+          }),
+        },
+      }) as unknown as Response;
+    await assert.rejects(
+      discoverModels({ apiKey: "k", baseURL }, { fetch: fetcher, maxBytes }),
+      maxBytes < 1_048_576 ? /too large/u : /Unable to read/u,
+    );
+    assert.equal(cancelled, true);
+    assert.equal(released, true);
+  }
 });
 
 test("wraps body read failures without leaking details", async () => {
@@ -474,6 +531,64 @@ test("wraps body read failures without leaking details", async () => {
       assert.ok(error instanceof DiscoveryError);
       assert.equal(error.message, "Unable to read the 9router /models response");
       assert.doesNotMatch(error.message, /boom|secret-body/u);
+      return true;
+    },
+  );
+});
+
+test("tolerates a reader whose cancel rejects", async () => {
+  const fetcher: typeof fetch = async () =>
+    ({
+      ok: true,
+      status: 200,
+      headers: new Headers(),
+      body: {
+        getReader: () => ({
+          read: async () => {
+            throw new Error("boom with secret-body");
+          },
+          cancel: async () => {
+            throw new Error("cancel blew up");
+          },
+          releaseLock: () => undefined,
+        }),
+      },
+    }) as unknown as Response;
+  await assert.rejects(
+    discoverModels({ apiKey: "k", baseURL }, { fetch: fetcher }),
+    (error: unknown) => {
+      assert.ok(error instanceof DiscoveryError);
+      assert.equal(error.message, "Unable to read the 9router /models response");
+      assert.doesNotMatch(error.message, /boom|secret-body|cancel blew up/u);
+      return true;
+    },
+  );
+});
+
+test("tolerates a reader whose releaseLock throws after cancel", async () => {
+  const fetcher: typeof fetch = async () =>
+    ({
+      ok: true,
+      status: 200,
+      headers: new Headers(),
+      body: {
+        getReader: () => ({
+          read: async () => {
+            throw new Error("boom with secret-body");
+          },
+          cancel: async () => undefined,
+          releaseLock: () => {
+            throw new Error("already released");
+          },
+        }),
+      },
+    }) as unknown as Response;
+  await assert.rejects(
+    discoverModels({ apiKey: "k", baseURL }, { fetch: fetcher }),
+    (error: unknown) => {
+      assert.ok(error instanceof DiscoveryError);
+      assert.equal(error.message, "Unable to read the 9router /models response");
+      assert.doesNotMatch(error.message, /boom|secret-body|already released/u);
       return true;
     },
   );

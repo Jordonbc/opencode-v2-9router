@@ -98,6 +98,14 @@ export const parseModelsPayload = (
   return { models: [...models.values()], dropped };
 };
 
+const cancelReader = async (reader: ReadableStreamDefaultReader<Uint8Array>): Promise<void> => {
+  try {
+    await reader.cancel();
+  } catch {
+    // The stream may already be closed, errored, or released on some runtimes.
+  }
+};
+
 const readBoundedBody = async (response: Response, maxBytes: number): Promise<string> => {
   const declaredSize = Number(response.headers.get("content-length"));
   if (Number.isFinite(declaredSize) && declaredSize > maxBytes) {
@@ -117,7 +125,7 @@ const readBoundedBody = async (response: Response, maxBytes: number): Promise<st
 
       bytes += chunk.value.byteLength;
       if (bytes > maxBytes) {
-        await reader.cancel().catch(() => undefined);
+        await cancelReader(reader);
         throw new DiscoveryError("9router /models response is too large");
       }
       text += decoder.decode(chunk.value, { stream: true });
@@ -126,7 +134,7 @@ const readBoundedBody = async (response: Response, maxBytes: number): Promise<st
     reader.releaseLock();
     return result;
   } catch (error) {
-    await reader.cancel().catch(() => undefined);
+    await cancelReader(reader);
     try {
       reader.releaseLock();
     } catch {
@@ -171,7 +179,7 @@ export const discoverModels = async (
     }
 
     const { models, dropped } = parseModelsPayload(payload, maxModels);
-    if (dropped > 0) onTruncated?.(dropped);
+    if (dropped > 0 && onTruncated) onTruncated(dropped);
     return models;
   } catch (error) {
     if (error instanceof DiscoveryError) throw error;
