@@ -536,6 +536,37 @@ test("wraps body read failures without leaking details", async () => {
   );
 });
 
+test("rejects invalid maxModels inside parseModelsPayload", () => {
+  for (const maxModels of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+    assert.throws(
+      () => parseModelsPayload({ data: [{ id: "a" }] }, maxModels),
+      (error: unknown) => {
+        assert.ok(error instanceof DiscoveryError);
+        assert.match((error as Error).message, /invalid \/models response/u);
+        return true;
+      },
+    );
+  }
+});
+
+test("ignores a throwing onTruncated callback", async () => {
+  const fetcher: typeof fetch = async () =>
+    new Response('{"data":[{"id":"a"},{"id":"b"}]}', { status: 200 });
+  assert.deepEqual(
+    await discoverModels(
+      { apiKey: "k", baseURL },
+      {
+        fetch: fetcher,
+        maxModels: 1,
+        onTruncated: () => {
+          throw new Error("observer blew up");
+        },
+      },
+    ),
+    [{ id: "a", reasoning: false, thinkingCanDisable: false }],
+  );
+});
+
 test("wraps an invalid timeout option instead of throwing RangeError", async () => {
   const fetcher: typeof fetch = async () => new Response('{"data":[]}', { status: 200 });
   for (const timeoutMs of [Number.NaN, -1, Number.POSITIVE_INFINITY]) {

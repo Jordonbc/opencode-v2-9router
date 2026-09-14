@@ -12,6 +12,7 @@ import {
   PROVIDER_PACKAGE,
   reasoningVariants,
   register9RouterCatalog,
+  resolveDirectModel,
 } from "../src/provider.js";
 
 type MutableRecord = Record<string, unknown>;
@@ -595,4 +596,439 @@ test("reports which provider and direct model supply the mirrored transport", ()
   console.info(
     `9router transport for ocg/muse-spark-1.3-contributor: provider=${logged?.providerID} model=${logged?.modelID} package=${logged?.package}`,
   );
+});
+
+test("resolves order-independently across duplicate candidates", () => {
+  const reversed = () => {
+    const catalog = createCatalog();
+    catalog.draft.provider.list = () => [
+      {
+        provider: { id: "b-second", package: "aisdk:@ai-sdk/anthropic" },
+        models: new Map([
+          ["m", { id: "m", package: "aisdk:@ai-sdk/anthropic", variants: [] }],
+        ]),
+      },
+      {
+        provider: { id: "a-first", package: "aisdk:@ai-sdk/openai" },
+        models: new Map([
+          ["m", { id: "m", package: "aisdk:@ai-sdk/openai", variants: [] }],
+        ]),
+      },
+    ] as never;
+    return catalog;
+  };
+
+  const first = resolveDirectModel(reversed().draft, "zz/m");
+  const second = resolveDirectModel(reversed().draft, "zz/m", {});
+  assert.deepEqual(first.package, PROVIDER_PACKAGE);
+  assert.equal(first.packageSource, "fallback");
+  assert.equal(first.candidateCount, 2);
+  assert.equal(first.candidate, undefined);
+  assert.deepEqual(second, first);
+});
+
+test("treats identical duplicate packages as equivalent regardless of order", () => {
+  for (const order of ["ab", "ba"] as const) {
+    const catalog = createCatalog();
+    const a = {
+      provider: { id: "a-first", package: "aisdk:@ai-sdk/openai" },
+      models: new Map([
+        ["m", { id: "m", package: "aisdk:@ai-sdk/openai", variants: [{ id: "low", settings: { reasoningEffort: "low" } }] }],
+      ]),
+    };
+    const b = {
+      provider: { id: "b-second", package: "aisdk:@ai-sdk/openai" },
+      models: new Map([
+        ["m", { id: "m", package: "aisdk:@ai-sdk/openai", variants: [{ id: "high", settings: { reasoningEffort: "high" } }] }],
+      ]),
+    };
+    catalog.draft.provider.list = () => (order === "ab" ? [a, b] : [b, a]) as never;
+
+    const resolved = resolveDirectModel(catalog.draft, "zz/m");
+    assert.equal(resolved.package, "aisdk:@ai-sdk/openai");
+    assert.equal(resolved.packageSource, "model");
+    assert.equal(resolved.candidateCount, 2);
+    // Deterministic by provider ID, independent of list() order.
+    assert.equal(resolved.candidate?.providerID, "a-first");
+  }
+});
+
+test("uses route/provider affinity to resolve conflicting packages", () => {
+  const catalog = createCatalog();
+  catalog.draft.provider.list = () => [
+    {
+      provider: { id: "other", package: "aisdk:@ai-sdk/anthropic" },
+      models: new Map([
+        ["m", { id: "m", package: "aisdk:@ai-sdk/anthropic", variants: [] }],
+      ]),
+    },
+    {
+      provider: { id: "acme", package: "aisdk:@ai-sdk/openai" },
+      models: new Map([
+        ["m", { id: "m", package: "aisdk:@ai-sdk/openai", variants: [] }],
+      ]),
+    },
+  ] as never;
+
+  const resolved = resolveDirectModel(catalog.draft, "acme/m");
+  assert.equal(resolved.package, "aisdk:@ai-sdk/openai");
+  assert.equal(resolved.packageSource, "model");
+  assert.equal(resolved.candidate?.providerID, "acme");
+
+  const warnings: string[] = [];
+  const noAffinity = resolveDirectModel(catalog.draft, "zz/m", {
+    warn: (message) => warnings.push(message),
+  });
+  assert.equal(noAffinity.package, PROVIDER_PACKAGE);
+  assert.equal(noAffinity.packageSource, "fallback");
+  assert.deepEqual(warnings, [
+    `opencode-9router-v2: ambiguous direct-model packages for zz/m; using ${PROVIDER_PACKAGE}`,
+  ]);
+});
+
+test("keeps package and reasoning metadata on the same selected candidate", () => {
+  const catalog = createCatalog();
+  catalog.draft.provider.list = () => [
+    {
+      provider: { id: "b-transport" },
+      models: new Map([
+        [
+          "m",
+          {
+            id: "m",
+            package: "aisdk:@ai-sdk/anthropic",
+            variants: [{ id: "low", settings: { reasoningEffort: "low" } }],
+          },
+        ],
+      ]),
+    },
+    {
+      provider: { id: "a-reasoning" },
+      models: new Map([
+        [
+          "m",
+          {
+            id: "m",
+            variants: [{ id: "high", settings: { reasoningEffort: "high" } }],
+          },
+        ],
+      ]),
+    },
+  ] as never;
+
+  const resolved = resolveDirectModel(catalog.draft, "zz/m");
+  assert.equal(resolved.candidate?.providerID, "b-transport");
+  assert.equal(resolved.package, "aisdk:@ai-sdk/anthropic");
+
+  const variants = reasoningVariants(catalog.draft, {
+    id: "zz/m",
+    reasoning: true,
+    thinkingCanDisable: false,
+  });
+  assert.deepEqual(variants.map((variant) => variant.id), ["low"]);
+
+  register9RouterCatalog(
+    catalog.draft,
+    { apiKey: "k", baseURL: "http://10.0.0.1:20128/v1" },
+    [{ id: "zz/m", reasoning: true, thinkingCanDisable: false }],
+  );
+  const registered = catalog.models.get("zz/m");
+  assert.equal(registered?.package, "aisdk:@ai-sdk/anthropic");
+  assert.deepEqual(
+    (registered?.variants as Array<{ id: string }>).map((variant) => variant.id),
+    ["low"],
+  );
+});
+
+test("skips malformed records and unsafe variant shapes", () => {
+  const catalog = createCatalog();
+  const good = {
+    provider: { id: "good", package: "aisdk:@ai-sdk/openai" },
+    models: new Map([
+      ["m", { id: "m", package: "aisdk:@ai-sdk/openai", variants: [] }],
+    ]),
+  };
+  catalog.draft.provider.list = () => [
+    null,
+    "record",
+    { provider: { id: "9router" }, models: new Map() },
+    { provider: null, models: new Map() },
+    { provider: { id: "broken-variants" }, models: new Map([["m", { id: "m" }]]) },
+    {
+      provider: { id: "null-variants" },
+      models: new Map([["m", { id: "m", variants: null }]]),
+    },
+    {
+      provider: { id: "string-variants" },
+      models: new Map([["m", { id: "m", variants: "low" }]]),
+    },
+    {
+      provider: { id: "array-variants" },
+      models: new Map([["m", { id: "m", package: "aisdk:@ai-sdk/openai", variants: [null, { id: "x" }, { id: "low" }] }]]),
+    },
+    {
+      provider: { id: "primitive-variants" },
+      models: new Map([["m", { id: "m", variants: [42, "low", true] }]]),
+    },
+    {
+      provider: { id: "primitive-settings" },
+      models: new Map([["m", { id: "m", variants: [{ id: "low", settings: 42 }] }]]),
+    },
+    {
+      provider: { id: "effort-dupe" },
+      models: new Map([["m", {
+        id: "m",
+        variants: [
+          { id: "a", settings: { reasoningEffort: "low" } },
+          { id: "b", settings: { reasoningEffort: "low" } },
+        ],
+      }]]),
+    },
+    { provider: { id: "no-models" } },
+    { provider: { id: "no-get", package: "aisdk:@ai-sdk/anthropic" }, models: {} },
+    good,
+  ] as never;
+
+  assert.deepEqual(directReasoningEfforts(catalog.draft, "zz/m"), []);
+  assert.equal(directModelPackage(catalog.draft, "zz/m"), "aisdk:@ai-sdk/openai");
+  const resolved = resolveDirectModel(catalog.draft, "zz/m");
+  assert.equal(resolved.candidateCount, 8);
+  assert.equal(resolved.candidate?.providerID, "array-variants");
+});
+
+test("a throwing provider.list never breaks resolution", () => {
+  const catalog = createCatalog();
+  catalog.draft.provider.list = () => {
+    throw new Error("catalog changed");
+  };
+  const resolved = resolveDirectModel(catalog.draft, "zz/m");
+  assert.equal(resolved.package, PROVIDER_PACKAGE);
+  assert.equal(resolved.candidateCount, 0);
+  assert.deepEqual(directReasoningEfforts(catalog.draft, "zz/m"), []);
+});
+
+test("packageless duplicates fall back with one warning", () => {
+  const catalog = createCatalog();
+  catalog.draft.provider.list = () => [
+    {
+      provider: { id: "b" },
+      models: new Map([["m", { id: "m", variants: [] }]]),
+    },
+    {
+      provider: { id: "a" },
+      models: new Map([["m", { id: "m", variants: [] }]]),
+    },
+  ] as never;
+
+  const warnings: string[] = [];
+  const resolved = resolveDirectModel(catalog.draft, "zz/m", {
+    warn: (message) => warnings.push(message),
+  });
+  assert.equal(resolved.package, PROVIDER_PACKAGE);
+  assert.equal(resolved.packageSource, "fallback");
+  assert.equal(resolved.candidateCount, 2);
+  assert.equal(resolved.candidate, undefined);
+  assert.deepEqual(warnings, [
+    `opencode-9router-v2: ambiguous direct-model packages for zz/m; using ${PROVIDER_PACKAGE}`,
+  ]);
+});
+
+test("packageless affinity resolves through the route prefix", () => {
+  const catalog = createCatalog();
+  catalog.draft.provider.list = () => [
+    {
+      provider: { id: "other" },
+      models: new Map([["m", { id: "m", variants: [] }]]),
+    },
+    {
+      provider: { id: "acme" },
+      models: new Map([
+        ["m", { id: "m", variants: [{ id: "low", settings: { reasoningEffort: "low" } }] }],
+      ]),
+    },
+  ] as never;
+
+  const resolved = resolveDirectModel(catalog.draft, "acme/m");
+  assert.equal(resolved.package, PROVIDER_PACKAGE);
+  assert.equal(resolved.packageSource, "fallback");
+  assert.equal(resolved.candidate?.providerID, "acme");
+  assert.deepEqual(directReasoningEfforts(catalog.draft, "acme/m"), ["low"]);
+});
+
+test("a throwing warn sink cannot break ambiguity fallback", () => {
+  const catalog = createCatalog();
+  catalog.draft.provider.list = () => [
+    {
+      provider: { id: "b" },
+      models: new Map([["m", { id: "m", package: "aisdk:@ai-sdk/anthropic", variants: [] }]]),
+    },
+    {
+      provider: { id: "a" },
+      models: new Map([["m", { id: "m", package: "aisdk:@ai-sdk/openai", variants: [] }]]),
+    },
+  ] as never;
+
+  const resolved = resolveDirectModel(catalog.draft, "zz/m", {
+    warn: () => {
+      throw new Error("warn blew up");
+    },
+  });
+  assert.equal(resolved.package, PROVIDER_PACKAGE);
+  assert.equal(resolved.candidate, undefined);
+});
+
+test("records with throwing getters are skipped", () => {
+  const catalog = createCatalog();
+  const boom = {
+    get provider(): unknown {
+      throw new Error("getter blew up");
+    },
+    models: new Map(),
+  };
+  const good = {
+    provider: { id: "good", package: "aisdk:@ai-sdk/openai" },
+    models: new Map([["m", { id: "m", package: "aisdk:@ai-sdk/openai", variants: [] }]]),
+  };
+  catalog.draft.provider.list = () => [boom, good] as never;
+
+  const resolved = resolveDirectModel(catalog.draft, "zz/m");
+  assert.equal(resolved.package, "aisdk:@ai-sdk/openai");
+  assert.equal(resolved.candidate?.providerID, "good");
+  assert.equal(resolved.candidateCount, 1);
+});
+
+test("a single packageless candidate resolves through the fallback source", () => {
+  const catalog = createCatalog();
+  catalog.draft.provider.list = () => [
+    {
+      provider: { id: "solo" },
+      models: new Map([
+        ["m", { id: "m", variants: [{ id: "low", settings: { reasoningEffort: "low" } }] }],
+      ]),
+    },
+  ] as never;
+
+  const resolved = resolveDirectModel(catalog.draft, "zz/m");
+  assert.equal(resolved.package, PROVIDER_PACKAGE);
+  assert.equal(resolved.packageSource, "fallback");
+  assert.equal(resolved.candidate?.providerID, "solo");
+  assert.equal(resolved.candidateCount, 1);
+  assert.deepEqual(directReasoningEfforts(catalog.draft, "zz/m"), ["low"]);
+  assert.equal(directTransport(catalog.draft, "zz/m"), undefined);
+});
+
+test("a non-array provider list resolves to the fallback", () => {
+  const catalog = createCatalog();
+  catalog.draft.provider.list = () => ({ length: 0 }) as never;
+
+  const resolved = resolveDirectModel(catalog.draft, "zz/m");
+  assert.equal(resolved.package, PROVIDER_PACKAGE);
+  assert.equal(resolved.packageSource, "fallback");
+  assert.equal(resolved.candidateCount, 0);
+  assert.deepEqual(directReasoningEfforts(catalog.draft, "zz/m"), []);
+});
+
+test("conflicting packages under the same route prefix stay ambiguous", () => {
+  const catalog = createCatalog();
+  const warnings: string[] = [];
+  catalog.draft.provider.list = () => [
+    {
+      provider: { id: "acme", package: "aisdk:@ai-sdk/openai" },
+      models: new Map([["m", { id: "m", package: "aisdk:@ai-sdk/openai", variants: [] }]]),
+    },
+    {
+      provider: { id: "acme", package: "aisdk:@ai-sdk/anthropic" },
+      models: new Map([["m", { id: "m", package: "aisdk:@ai-sdk/anthropic", variants: [] }]]),
+    },
+  ] as never;
+
+  const resolved = resolveDirectModel(catalog.draft, "acme/m", {
+    warn: (message) => warnings.push(message),
+  });
+  assert.equal(resolved.package, PROVIDER_PACKAGE);
+  assert.equal(resolved.packageSource, "fallback");
+  assert.equal(resolved.candidate, undefined);
+  assert.equal(resolved.candidateCount, 2);
+  assert.equal(warnings.length, 1);
+});
+
+test("a prefix-less route skips affinity and resolves deterministically", () => {
+  const catalog = createCatalog();
+  catalog.draft.provider.list = () => [
+    {
+      provider: { id: "b" },
+      models: new Map([
+        ["plain", { id: "plain", variants: [{ id: "low", settings: { reasoningEffort: "low" } }] }],
+      ]),
+    },
+    {
+      provider: { id: "a" },
+      models: new Map([
+        ["plain", { id: "plain", variants: [{ id: "low", settings: { reasoningEffort: "low" } }] }],
+      ]),
+    },
+  ] as never;
+
+  const resolved = resolveDirectModel(catalog.draft, "plain");
+  assert.equal(resolved.package, PROVIDER_PACKAGE);
+  assert.equal(resolved.packageSource, "fallback");
+  assert.equal(resolved.candidate, undefined);
+  assert.equal(resolved.candidateCount, 2);
+});
+
+test("registration isolates a failing model update and reports the skip", () => {
+  const catalog = createCatalog();
+  const warnings: string[] = [];
+  const seen: string[] = [];
+  const failing: Record<string, MutableRecord> = {};
+  catalog.draft.model.update = ((
+    _providerID: string,
+    id: string,
+    update: (model: MutableRecord) => void,
+  ) => {
+    if (id === "bad/model") throw new Error("draft shape changed");
+    const model = { id, modelID: id, limit: {} };
+    failing[id] = model;
+    update(model);
+    seen.push(id);
+  }) as typeof catalog.draft.model.update;
+
+  const infos: string[] = [];
+  register9RouterCatalog(
+    catalog.draft,
+    { apiKey: "k", baseURL: "http://10.0.0.1:20128/v1" },
+    [
+      { id: "bad/model", reasoning: false, thinkingCanDisable: false },
+      { id: "good/model", reasoning: false, thinkingCanDisable: false },
+    ],
+    {
+      warn: (message) => warnings.push(message),
+      onResolved: (info) => infos.push(`${info.route}:${info.package}`),
+    },
+  );
+
+  assert.deepEqual(seen, ["good/model"]);
+  assert.deepEqual(infos, [
+    `bad/model:${PROVIDER_PACKAGE}`,
+    `good/model:${PROVIDER_PACKAGE}`,
+  ]);
+  assert.deepEqual(warnings, ["opencode-9router-v2: skipped 1 model(s) that failed to register"]);
+});
+
+test("a throwing onResolved or warn sink cannot break registration", () => {
+  const catalog = createCatalog();
+  register9RouterCatalog(
+    catalog.draft,
+    { apiKey: "k", baseURL: "http://10.0.0.1:20128/v1" },
+    [{ id: "a/b", reasoning: false, thinkingCanDisable: false }],
+    {
+      warn: () => {
+        throw new Error("warn blew up");
+      },
+      onResolved: () => {
+        throw new Error("observer blew up");
+      },
+    },
+  );
+  assert.ok(catalog.models.get("a/b"));
 });

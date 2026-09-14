@@ -77,6 +77,9 @@ export const parseModelsPayload = (
   payload: unknown,
   maxModels = MAX_MODELS,
 ): DiscoveryResult => {
+  if (!Number.isSafeInteger(maxModels) || maxModels < 1) {
+    throw new DiscoveryError("9router returned an invalid /models response");
+  }
   if (!payload || typeof payload !== "object" || !Array.isArray((payload as { data?: unknown }).data)) {
     throw new DiscoveryError("9router returned an invalid /models response");
   }
@@ -196,7 +199,13 @@ export const discoverModels = async (
     }
 
     const { models, dropped } = parseModelsPayload(payload, maxModels);
-    if (dropped > 0 && onTruncated) onTruncated(dropped);
+    if (dropped > 0 && onTruncated) {
+      try {
+        onTruncated(dropped);
+      } catch {
+        // Truncation observability must not fail an otherwise good discovery.
+      }
+    }
     return models;
   } catch (error) {
     if (error instanceof DiscoveryError) throw error;

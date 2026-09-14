@@ -84,7 +84,10 @@ test("registers discovered models through catalog.transform", async () => {
 
   assert.equal(transforms, 1);
   assert.deepEqual(warnings, []);
-  assert.deepEqual(infos, [`opencode-9router-v2: registered 1 model(s) from 9Router`]);
+  assert.ok(
+    infos.includes("opencode-9router-v2: registered 1 model(s) from 9Router"),
+    `expected registration summary in ${JSON.stringify(infos)}`,
+  );
   assert.equal(providers.get(PROVIDER_ID)?.package, PROVIDER_PACKAGE);
   assert.deepEqual([...models.keys()], ["ocg/muse-spark-1.3-contributor"]);
   assert.equal(models.get("ocg/muse-spark-1.3-contributor")?.modelID, "ocg/muse-spark-1.3-contributor");
@@ -350,6 +353,53 @@ test("info sink receives the registration summary", async () => {
   assert.deepEqual(infos, ["opencode-9router-v2: registered 1 model(s) from 9Router"]);
 });
 
+test("emits transport observability for the Muse route without credentials", async () => {
+  const infos: string[] = [];
+  const secret = "never-log-this-key";
+  await createPlugin({
+    config: async () => ({ ok: true, value: { apiKey: secret, baseURL: "http://router.test/v1" } }),
+    discover: async () => [
+      { id: "ocg/muse-spark-1.3-contributor", reasoning: false, thinkingCanDisable: false },
+    ],
+    warn: () => undefined,
+    info: (message) => infos.push(message),
+  }).setup({
+    catalog: {
+      transform: async (update: (draft: CatalogDraft) => void) => {
+        update({
+          provider: {
+            list: () => [
+              {
+                provider: { id: "acme", package: "aisdk:@ai-sdk/openai" },
+                models: new Map([
+                  [
+                    "muse-spark-1.3-contributor",
+                    { id: "muse-spark-1.3-contributor", package: "aisdk:@ai-sdk/openai", variants: [] },
+                  ],
+                ]),
+              },
+            ],
+            update: (_id: string, apply: (p: MutableRecord) => void) => apply({ settings: {} }),
+          },
+          model: {
+            update: (_providerID: string, _id: string, apply: (m: MutableRecord) => void) =>
+              apply({ limit: {} }),
+          },
+        } as unknown as CatalogDraft);
+        return { dispose: async () => undefined };
+      },
+    },
+  } as never);
+
+  const transport = infos.find((message) => message.includes("transport route="));
+  assert.ok(transport, `expected transport observability in ${JSON.stringify(infos)}`);
+  assert.match(transport ?? "", /route=ocg\/muse-spark-1\.3-contributor/u);
+  assert.match(transport ?? "", /provider=acme/u);
+  assert.match(transport ?? "", /package=aisdk:@ai-sdk\/openai/u);
+  assert.match(transport ?? "", /source=model/u);
+  for (const message of infos) assert.doesNotMatch(message, new RegExp(secret, "u"));
+});
+
 test("a throwing config dependency warns instead of failing setup", async () => {
   const warnings: string[] = [];
   let transforms = 0;
@@ -446,4 +496,46 @@ test("a throwing info sink does not break setup", async () => {
     },
   } as never);
   assert.deepEqual(warnings, []);
+});
+
+test("a throwing warn sink cannot break setup", async () => {
+  let transforms = 0;
+  await createPlugin({
+    config: async () => ({ ok: false, error: new ConfigError("nope") }),
+    discover: async () => {
+      throw new Error("should not run");
+    },
+    warn: () => {
+      throw new Error("warn blew up");
+    },
+  }).setup({
+    catalog: {
+      transform: async () => {
+        transforms += 1;
+        return { dispose: async () => undefined };
+      },
+    },
+  } as never);
+  assert.equal(transforms, 0);
+});
+
+test("a non-array discover return warns instead of throwing", async () => {
+  const warnings: string[] = [];
+  let transforms = 0;
+  await createPlugin({
+    config: async () => ({ ok: true, value: { ...okConfig } }),
+    discover: (async () => ({ id: "a" })) as never,
+    warn: (message) => warnings.push(message),
+  }).setup({
+    catalog: {
+      transform: async () => {
+        transforms += 1;
+        return { dispose: async () => undefined };
+      },
+    },
+  } as never);
+  assert.equal(transforms, 0);
+  assert.deepEqual(warnings, [
+    "opencode-9router-v2: model discovery failed; 9Router will be unavailable",
+  ]);
 });
