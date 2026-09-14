@@ -62,7 +62,7 @@ opencode2 models --standalone | grep '^9router/'
 opencode2 run --standalone --model 9router/ocg/muse-spark-1.3-contributor Hello
 ```
 
-In the TUI, `/models` should show provider `9Router` and names such as `Muse Spark 1.3 Contributor`.
+In the TUI, `/models` should show provider `9Router` and names such as `Muse Spark 1.3 Contributor (ocg)`.
 
 For a tool round trip, ask the selected model to use a harmless built-in tool, such as listing the current directory, and confirm the tool result is incorporated into its answer.
 
