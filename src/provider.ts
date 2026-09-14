@@ -5,6 +5,7 @@ import type { DiscoveredModel } from "./discovery.js";
 export const PROVIDER_ID = "9router";
 export const PROVIDER_NAME = "9Router";
 export const PROVIDER_PACKAGE = "aisdk:@ai-sdk/openai-compatible";
+export const PROVIDER_RESPONSES_PACKAGE = "@opencode/ai/providers/openai-compatible/responses";
 
 const REASONING_EFFORTS = ["none", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 type ReasoningEffort = (typeof REASONING_EFFORTS)[number];
@@ -94,10 +95,14 @@ export const register9RouterCatalog = (
 
   for (const discovered of models) {
     const variants = reasoningVariants(catalog, discovered);
+    // Reasoning models speak Responses natively. Sending them over chat
+    // forces the gateway to translate openai -> openai-responses, which
+    // replays full reasoning paragraphs instead of concise summaries.
+    const modelPackage = discovered.reasoning ? PROVIDER_RESPONSES_PACKAGE : PROVIDER_PACKAGE;
     catalog.model.update(PROVIDER_ID, discovered.id, (model) => {
       model.name = displayName(discovered.id);
       model.modelID = discovered.id as unknown as typeof model.modelID;
-      model.package = PROVIDER_PACKAGE;
+      model.package = modelPackage as unknown as typeof model.package;
       model.enabled = true;
       model.status = "active";
       model.variants = variants as unknown as typeof model.variants;
