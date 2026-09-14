@@ -15,8 +15,10 @@ export type CatalogDraft = Parameters<
 >[0];
 
 export const displayName = (modelID: string): string => {
-  const routeName = modelID.slice(modelID.lastIndexOf("/") + 1);
-  return routeName
+  const separator = modelID.lastIndexOf("/");
+  const routeName = separator < 0 ? modelID : modelID.slice(separator + 1);
+  const prefix = separator <= 0 ? "" : modelID.slice(0, separator);
+  const base = routeName
     .split(/[-_]+/u)
     .filter(Boolean)
     .map((part) => {
@@ -24,6 +26,9 @@ export const displayName = (modelID: string): string => {
       return part.charAt(0).toUpperCase() + part.slice(1);
     })
     .join(" ");
+  if (!prefix) return base;
+  if (!base) return `(${prefix})`;
+  return `${base} (${prefix})`;
 };
 
 const isReasoningEffort = (value: unknown): value is ReasoningEffort =>

@@ -75,16 +75,18 @@ test("exposes the documented provider identity", () => {
 });
 
 test("creates a human-friendly name without changing the route ID", () => {
-  assert.equal(displayName("ocg/muse-spark-1.3-contributor"), "Muse Spark 1.3 Contributor");
+  assert.equal(displayName("ocg/muse-spark-1.3-contributor"), "Muse Spark 1.3 Contributor (ocg)");
 });
 
 test("formats display names for separators, short segments, and bare IDs", () => {
   assert.equal(displayName("plainmodel"), "Plainmodel");
-  assert.equal(displayName("ocg/my_model-name"), "MY Model Name");
-  assert.equal(displayName("ocg/gpt-4o-mini"), "GPT 4o Mini");
-  assert.equal(displayName("ocg/a--b__c"), "A B C");
-  assert.equal(displayName("ocg/API"), "API");
-  assert.equal(displayName("ocg/"), "");
+  assert.equal(displayName("ocg/my_model-name"), "MY Model Name (ocg)");
+  assert.equal(displayName("ocg/gpt-4o-mini"), "GPT 4o Mini (ocg)");
+  assert.equal(displayName("ocg/a--b__c"), "A B C (ocg)");
+  assert.equal(displayName("ocg/API"), "API (ocg)");
+  assert.equal(displayName("ocg/"), "(ocg)");
+  assert.equal(displayName("a/b/c"), "C (a/b)");
+  assert.equal(displayName(""), "");
 });
 
 test("derives the direct model lookup ID", () => {
@@ -271,7 +273,7 @@ test("registers the exact V2 provider and model transport shape", () => {
   assert.deepEqual(catalog.models.get(id), {
     id,
     modelID: id,
-    name: "Muse Spark 1.3 Contributor",
+    name: "Muse Spark 1.3 Contributor (ocg)",
     package: PROVIDER_PACKAGE,
     enabled: true,
     status: "active",
@@ -318,7 +320,7 @@ test("preserves existing provider settings and registers models without limits",
   assert.deepEqual(catalog.models.get("a/b"), {
     id: "a/b",
     modelID: "a/b",
-    name: "B",
+    name: "B (a)",
     package: PROVIDER_PACKAGE,
     enabled: true,
     status: "active",
