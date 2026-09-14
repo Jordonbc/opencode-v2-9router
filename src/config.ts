@@ -99,11 +99,12 @@ export const loadConfig = async (
   fallbackPath = CONFIG_FILE,
 ): Promise<ConfigResult> => {
   try {
-    const needsFallback =
-      !environment.OPENCODE_9ROUTER_URL || !environment.OPENCODE_9ROUTER_API_KEY;
+    const envURL = environment.OPENCODE_9ROUTER_URL?.trim();
+    const envKey = environment.OPENCODE_9ROUTER_API_KEY?.trim();
+    const needsFallback = !envURL || !envKey;
     const fallback = needsFallback ? await readFallback(fallbackPath) : {};
-    const rawURL = environment.OPENCODE_9ROUTER_URL || fallback.OPENCODE_9ROUTER_URL;
-    const apiKey = (environment.OPENCODE_9ROUTER_API_KEY || fallback.OPENCODE_9ROUTER_API_KEY)?.trim();
+    const rawURL = envURL || fallback.OPENCODE_9ROUTER_URL;
+    const apiKey = envKey || fallback.OPENCODE_9ROUTER_API_KEY?.trim();
 
     if (!rawURL) {
       return { ok: false, error: new ConfigError("OPENCODE_9ROUTER_URL is not configured") };

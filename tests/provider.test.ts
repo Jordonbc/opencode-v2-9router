@@ -406,6 +406,18 @@ test("copies a partial limit without touching the other default", () => {
   assert.deepEqual(catalog.models.get("c/model")?.limit, { context: 123, output: 0 });
 });
 
+test("copies an output-only limit without touching the context default", () => {
+  const catalog = createCatalog();
+  const outcome = register9RouterCatalog(
+    catalog.draft,
+    { apiKey: "k", baseURL: "http://10.0.0.1:20128/v1" },
+    [{ id: "c/model", reasoning: false, thinkingCanDisable: false, outputLimit: 456 }],
+  );
+
+  assert.deepEqual(catalog.models.get("c/model")?.limit, { context: 0, output: 456 });
+  assert.deepEqual(outcome, { registered: 1, skipped: 0 });
+});
+
 test("mirrors the direct model package for Muse Spark", () => {
   const catalog = withDirectEntry({
     directID: "muse-spark-1.3-contributor",
@@ -1017,7 +1029,7 @@ test("registration isolates a failing model update and reports the skip", () => 
 
 test("a throwing onResolved or warn sink cannot break registration", () => {
   const catalog = createCatalog();
-  register9RouterCatalog(
+  const outcome = register9RouterCatalog(
     catalog.draft,
     { apiKey: "k", baseURL: "http://10.0.0.1:20128/v1" },
     [{ id: "a/b", reasoning: false, thinkingCanDisable: false }],
@@ -1031,4 +1043,119 @@ test("a throwing onResolved or warn sink cannot break registration", () => {
     },
   );
   assert.ok(catalog.models.get("a/b"));
+  assert.deepEqual(outcome, { registered: 1, skipped: 0 });
+});
+
+test("resolves nested routes through the first segment or full prefix", () => {
+  const byFirstSegment = createCatalog();
+  byFirstSegment.draft.provider.list = () => [
+    {
+      provider: { id: "other", package: "aisdk:@ai-sdk/anthropic" },
+      models: new Map([
+        ["c", { id: "c", package: "aisdk:@ai-sdk/anthropic", variants: [] }],
+      ]),
+    },
+    {
+      provider: { id: "a", package: "aisdk:@ai-sdk/openai" },
+      models: new Map([["c", { id: "c", package: "aisdk:@ai-sdk/openai", variants: [] }]]),
+    },
+  ] as never;
+
+  const first = resolveDirectModel(byFirstSegment.draft, "a/b/c");
+  assert.equal(first.package, "aisdk:@ai-sdk/openai");
+  assert.equal(first.packageSource, "model");
+  assert.equal(first.candidate?.providerID, "a");
+
+  const byFullPrefix = createCatalog();
+  byFullPrefix.draft.provider.list = () => [
+    {
+      provider: { id: "other", package: "aisdk:@ai-sdk/anthropic" },
+      models: new Map([
+        ["c", { id: "c", package: "aisdk:@ai-sdk/anthropic", variants: [] }],
+      ]),
+    },
+    {
+      provider: { id: "a/b", package: "aisdk:@ai-sdk/openai" },
+      models: new Map([["c", { id: "c", package: "aisdk:@ai-sdk/openai", variants: [] }]]),
+    },
+  ] as never;
+
+  const full = resolveDirectModel(byFullPrefix.draft, "a/b/c");
+  assert.equal(full.package, "aisdk:@ai-sdk/openai");
+  assert.equal(full.candidate?.providerID, "a/b");
+});
+
+test("warns once per ambiguous route within a registration pass", () => {
+  const catalog = createCatalog();
+  catalog.draft.provider.list = () => [
+    {
+      provider: { id: "b" },
+      models: new Map([["m", { id: "m", package: "aisdk:@ai-sdk/anthropic", variants: [] }]]),
+    },
+    {
+      provider: { id: "a" },
+      models: new Map([["m", { id: "m", package: "aisdk:@ai-sdk/openai", variants: [] }]]),
+    },
+  ] as never;
+
+  const warnings: string[] = [];
+  const shared = new Set<string>();
+  const options = { warn: (message: string) => warnings.push(message), warnedRoutes: shared };
+  resolveDirectModel(catalog.draft, "zz/m", options);
+  resolveDirectModel(catalog.draft, "zz/m", options);
+  assert.deepEqual(warnings, [
+    `opencode-9router-v2: ambiguous direct-model packages for zz/m; using ${PROVIDER_PACKAGE}`,
+  ]);
+
+  const passWarnings: string[] = [];
+  const outcome = register9RouterCatalog(
+    catalog.draft,
+    { apiKey: "k", baseURL: "http://10.0.0.1:20128/v1" },
+    [
+      { id: "zz/m", reasoning: false, thinkingCanDisable: false },
+      { id: "zz/m", reasoning: false, thinkingCanDisable: false },
+    ],
+    { warn: (message: string) => passWarnings.push(message) },
+  );
+  assert.deepEqual(outcome, { registered: 2, skipped: 0 });
+  assert.deepEqual(passWarnings, [
+    `opencode-9router-v2: ambiguous direct-model packages for zz/m; using ${PROVIDER_PACKAGE}`,
+  ]);
+});
+
+test("skips provider records with a case-variant 9router ID", () => {
+  const catalog = createCatalog();
+  catalog.draft.provider.list = () => [
+    {
+      provider: { id: "9Router", package: "aisdk:@ai-sdk/anthropic" },
+      models: new Map([["m", { id: "m", package: "aisdk:@ai-sdk/anthropic", variants: [] }]]),
+    },
+    {
+      provider: { id: "good", package: "aisdk:@ai-sdk/openai" },
+      models: new Map([["m", { id: "m", package: "aisdk:@ai-sdk/openai", variants: [] }]]),
+    },
+  ] as never;
+
+  const resolved = resolveDirectModel(catalog.draft, "zz/m");
+  assert.equal(resolved.package, "aisdk:@ai-sdk/openai");
+  assert.equal(resolved.candidate?.providerID, "good");
+  assert.equal(resolved.candidateCount, 1);
+});
+
+test("skips invalid discovered entries and reports counts", () => {
+  const catalog = createCatalog();
+  const warnings: string[] = [];
+  const outcome = register9RouterCatalog(
+    catalog.draft,
+    { apiKey: "k", baseURL: "http://10.0.0.1:20128/v1" },
+    [
+      null,
+      { id: 42 },
+      { id: "good/model", reasoning: false, thinkingCanDisable: false },
+    ] as unknown as Parameters<typeof register9RouterCatalog>[2],
+    { warn: (message: string) => warnings.push(message) },
+  );
+  assert.deepEqual(outcome, { registered: 1, skipped: 2 });
+  assert.deepEqual(warnings, ["opencode-9router-v2: skipped 2 model(s) that failed to register"]);
+  assert.deepEqual([...(catalog.models.keys() as unknown as string[])], ["good/model"]);
 });

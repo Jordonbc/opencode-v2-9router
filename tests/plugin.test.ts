@@ -539,3 +539,125 @@ test("a non-array discover return warns instead of throwing", async () => {
     "opencode-9router-v2: model discovery failed; 9Router will be unavailable",
   ]);
 });
+
+test("discover elements with invalid shapes warn instead of registering", async () => {
+  const badPayloads: unknown[] = [
+    [null],
+    ["model"],
+    [42],
+    [{ id: 42, reasoning: false, thinkingCanDisable: false }],
+    [{ id: "a", reasoning: "yes", thinkingCanDisable: false }],
+    [{ id: "a", reasoning: false, thinkingCanDisable: 1 }],
+    [{ id: "a", reasoning: false, thinkingCanDisable: false, contextLimit: "100" }],
+    [{ id: "a", reasoning: false, thinkingCanDisable: false, outputLimit: "100" }],
+  ];
+  for (const payload of badPayloads) {
+    const warnings: string[] = [];
+    let transforms = 0;
+    await createPlugin({
+      config: async () => ({ ok: true, value: { ...okConfig } }),
+      discover: (async () => payload) as never,
+      warn: (message) => warnings.push(message),
+    }).setup({
+      catalog: {
+        transform: async () => {
+          transforms += 1;
+          return { dispose: async () => undefined };
+        },
+      },
+    } as never);
+    assert.equal(transforms, 0);
+    assert.deepEqual(warnings, [
+      "opencode-9router-v2: model discovery failed; 9Router will be unavailable",
+    ]);
+  }
+});
+
+test("explicit undefined overrides fall back to the defaults", async () => {
+  const warnings: string[] = [];
+  const savedFetch = globalThis.fetch;
+  const savedURL = process.env.OPENCODE_9ROUTER_URL;
+  const savedKey = process.env.OPENCODE_9ROUTER_API_KEY;
+  globalThis.fetch = (async () =>
+    new Response('{"data":[{"id":"ocg/model"}]}', { status: 200 })) as typeof fetch;
+  process.env.OPENCODE_9ROUTER_URL = "http://router.test/v1";
+  process.env.OPENCODE_9ROUTER_API_KEY = "secret-key";
+  try {
+    let transforms = 0;
+    await createPlugin({
+      config: undefined,
+      discover: undefined,
+      warn: (message) => warnings.push(message),
+    }).setup({
+      catalog: {
+        transform: async (update: (draft: CatalogDraft) => void) => {
+          transforms += 1;
+          update({
+            provider: {
+              list: () => [],
+              update: (_id: string, apply: (p: MutableRecord) => void) => apply({ settings: {} }),
+            },
+            model: {
+              update: (_providerID: string, _id: string, apply: (m: MutableRecord) => void) =>
+                apply({ limit: { context: 1, output: 2 } }),
+            },
+          } as unknown as CatalogDraft);
+          return { dispose: async () => undefined };
+        },
+      },
+    } as never);
+    assert.equal(transforms, 1);
+    assert.deepEqual(warnings, []);
+  } finally {
+    globalThis.fetch = savedFetch;
+    if (savedURL === undefined) delete process.env.OPENCODE_9ROUTER_URL;
+    else process.env.OPENCODE_9ROUTER_URL = savedURL;
+    if (savedKey === undefined) delete process.env.OPENCODE_9ROUTER_API_KEY;
+    else process.env.OPENCODE_9ROUTER_API_KEY = savedKey;
+  }
+});
+
+test("setup summary reports skipped models", async () => {
+  const warnings: string[] = [];
+  const infos: string[] = [];
+  await createPlugin({
+    config: async () => ({ ok: true, value: { ...okConfig } }),
+    discover: async () => [
+      {
+        id: "good/model",
+        reasoning: false,
+        thinkingCanDisable: false,
+        contextLimit: 1000,
+        outputLimit: 100,
+      },
+      { id: "bad/model", reasoning: false, thinkingCanDisable: false },
+    ],
+    warn: (message) => warnings.push(message),
+    info: (message) => infos.push(message),
+  }).setup({
+    catalog: {
+      transform: async (update: (draft: CatalogDraft) => void) => {
+        update({
+          provider: {
+            list: () => [],
+            update: (_id: string, apply: (p: MutableRecord) => void) => apply({ settings: {} }),
+          },
+          model: {
+            update: (providerID: string, id: string, apply: (m: MutableRecord) => void) => {
+              if (id === "bad/model") throw new Error("draft shape changed");
+              assert.equal(providerID, PROVIDER_ID);
+              apply({ limit: {} });
+            },
+          },
+        } as unknown as CatalogDraft);
+        return { dispose: async () => undefined };
+      },
+    },
+  } as never);
+  assert.deepEqual(warnings, [
+    "opencode-9router-v2: skipped 1 model(s) that failed to register",
+  ]);
+  assert.deepEqual(infos, [
+    "opencode-9router-v2: registered 1 model(s) from 9Router (skipped 1 model(s))",
+  ]);
+});

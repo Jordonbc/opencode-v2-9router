@@ -92,6 +92,11 @@ export type ResolutionInfo = {
 
 export type ResolveOptions = {
   readonly warn?: (message: string) => void;
+  /**
+   * Routes already warned about during this registration pass. Lets repeated
+   * resolutions of the same ambiguous route (and transform replays) warn once.
+   */
+  readonly warnedRoutes?: Set<string>;
 };
 
 export type RegisterOptions = {
@@ -149,7 +154,7 @@ const collectCandidates = (catalog: CatalogDraft, modelID: string): DirectCandid
       }
       const providerRecord = provider as { id?: unknown; package?: unknown };
       const providerID = providerRecord.id;
-      if (typeof providerID !== "string" || providerID === PROVIDER_ID) continue;
+      if (typeof providerID !== "string" || providerID.toLowerCase() === PROVIDER_ID) continue;
       const get = (models as { get?: unknown }).get;
       if (typeof get !== "function") continue;
       const direct = (get as (id: string) => unknown).call(models, modelID);
@@ -174,20 +179,46 @@ const collectCandidates = (catalog: CatalogDraft, modelID: string): DirectCandid
 const byProviderID = (a: DirectCandidate, b: DirectCandidate): number =>
   a.providerID < b.providerID ? -1 : a.providerID > b.providerID ? 1 : 0;
 
-const routePrefix = (routeID: string): string => {
-  const slash = routeID.indexOf("/");
-  return slash > 0 ? routeID.slice(0, slash) : "";
+/**
+ * Split a route into its provider hint (first segment) and full prefix (all
+ * segments but the last, which directModelID resolves). Affinity matches a
+ * candidate when the provider ID equals either form, so nested routes such
+ * as `a/b/c` (model `c`) can still match owning provider `a`.
+ */
+const splitRoute = (routeID: string): { fullPrefix: string; providerHint: string } => {
+  const firstSlash = routeID.indexOf("/");
+  const lastSlash = routeID.lastIndexOf("/");
+  return {
+    fullPrefix: lastSlash > 0 ? routeID.slice(0, lastSlash) : "",
+    providerHint: firstSlash > 0 ? routeID.slice(0, firstSlash) : "",
+  };
 };
+
+const matchesAffinity = (
+  candidate: DirectCandidate,
+  route: { fullPrefix: string; providerHint: string },
+): boolean =>
+  candidate.providerID === route.fullPrefix ||
+  (route.providerHint !== "" && candidate.providerID === route.providerHint);
 
 const ambiguousFallback = (
   candidateCount: number,
   routeID: string,
   warn: ((message: string) => void) | undefined,
+  warnedRoutes?: Set<string>,
 ): ResolvedDirectModel => {
-  safeWarn(
-    warn,
-    `opencode-9router-v2: ambiguous direct-model packages for ${routeID}; using ${PROVIDER_PACKAGE}`,
-  );
+  if (warnedRoutes === undefined) {
+    safeWarn(
+      warn,
+      `opencode-9router-v2: ambiguous direct-model packages for ${routeID}; using ${PROVIDER_PACKAGE}`,
+    );
+  } else if (!warnedRoutes.has(routeID)) {
+    warnedRoutes.add(routeID);
+    safeWarn(
+      warn,
+      `opencode-9router-v2: ambiguous direct-model packages for ${routeID}; using ${PROVIDER_PACKAGE}`,
+    );
+  }
   return { package: PROVIDER_PACKAGE, packageSource: "fallback", candidateCount };
 };
 
@@ -195,14 +226,15 @@ const resolvePackageless = (
   candidates: readonly DirectCandidate[],
   routeID: string,
   warn: ((message: string) => void) | undefined,
+  warnedRoutes?: Set<string>,
 ): ResolvedDirectModel => {
   if (candidates.length === 0) {
     return { package: PROVIDER_PACKAGE, packageSource: "fallback", candidateCount: 0 };
   }
   const sorted = [...candidates].sort(byProviderID);
-  const prefix = routePrefix(routeID);
-  const affinityMatches =
-    prefix === "" ? [] : sorted.filter((candidate) => candidate.providerID === prefix);
+  const affinityMatches = sorted.filter((candidate) =>
+    matchesAffinity(candidate, splitRoute(routeID)),
+  );
   let affinityChoice: DirectCandidate | undefined;
   if (affinityMatches.length === 1) {
     affinityChoice = affinityMatches[0];
@@ -210,7 +242,7 @@ const resolvePackageless = (
     affinityChoice = sorted[0];
   }
   if (affinityChoice === undefined) {
-    return ambiguousFallback(candidates.length, routeID, warn);
+    return ambiguousFallback(candidates.length, routeID, warn, warnedRoutes);
   }
   return {
     candidate: affinityChoice,
@@ -225,8 +257,8 @@ const resolvePackageless = (
  * matching non-9router candidate, prefers model-level package metadata over
  * provider-level fallback, and never depends on provider.list() ordering.
  * Conflicting packages fall back to the conservative compatible transport
- * unless the route prefix names the owning provider (e.g. `acme/model`
- * matching provider `acme`).
+ * unless the route names the owning provider (e.g. `acme/model` matching
+ * provider `acme`, or nested `a/b/c` matching provider `a` or `a/b`).
  */
 export const resolveDirectModel = (
   catalog: CatalogDraft,
@@ -246,7 +278,7 @@ export const resolveDirectModel = (
   const source: "model" | "provider" = useModelLevel ? "model" : "provider";
 
   if (pool.length === 0) {
-    return resolvePackageless(candidates, routeID, options.warn);
+    return resolvePackageless(candidates, routeID, options.warn, options.warnedRoutes);
   }
 
   const poolPackage = (candidate: DirectCandidate): string =>
@@ -264,8 +296,8 @@ export const resolveDirectModel = (
     };
   }
 
-  const prefix = routePrefix(routeID);
-  const affinity = prefix === "" ? [] : ordered.filter((candidate) => candidate.providerID === prefix);
+  const route = splitRoute(routeID);
+  const affinity = ordered.filter((candidate) => matchesAffinity(candidate, route));
   const affinityPackages = [...new Set(affinity.map(poolPackage))];
   let affinityChoice: DirectCandidate | undefined;
   if (affinity.length > 0 && affinityPackages.length === 1) {
@@ -280,7 +312,7 @@ export const resolveDirectModel = (
     };
   }
 
-  return ambiguousFallback(candidates.length, routeID, options.warn);
+  return ambiguousFallback(candidates.length, routeID, options.warn, options.warnedRoutes);
 };
 
 export const directTransport = (
@@ -328,12 +360,28 @@ export const reasoningVariants = (
   return efforts.map((effort) => ({ id: effort, settings: { reasoningEffort: effort } }));
 };
 
+export type RegisterResult = {
+  /** Models successfully written to the catalog. */
+  readonly registered: number;
+  /** Discovered entries skipped because preparation or update failed. */
+  readonly skipped: number;
+};
+
+type PreparedModel = {
+  readonly route: string;
+  readonly name: string;
+  readonly transport: string;
+  readonly variants: readonly { id: string; settings: { reasoningEffort: string } }[];
+  readonly limit?: { readonly context?: number; readonly output?: number };
+  readonly resolution: ResolutionInfo;
+};
+
 export const register9RouterCatalog = (
   catalog: CatalogDraft,
   config: RouterConfig,
   models: readonly DiscoveredModel[],
   options: RegisterOptions = {},
-): void => {
+): RegisterResult => {
   catalog.provider.update(PROVIDER_ID, (provider) => {
     provider.name = PROVIDER_NAME;
     provider.package = PROVIDER_PACKAGE;
@@ -345,44 +393,77 @@ export const register9RouterCatalog = (
     };
   });
 
+  let registered = 0;
   let skipped = 0;
+  const warnedRoutes = new Set<string>();
   for (const discovered of models) {
-    // One shared resolution drives both transport and reasoning variants so
-    // they can never come from different providers.
-    const resolved = resolveDirectModel(catalog, discovered.id, { warn: options.warn });
-    const variants = selectEfforts(resolved.candidate?.efforts ?? [], discovered).map(
-      (effort) => ({ id: effort, settings: { reasoningEffort: effort } }),
-    );
+    // Resolve and validate everything before touching the draft, so the
+    // update callback below only performs prepared assignments and can never
+    // leave a half-mutated model behind.
+    let prepared: PreparedModel;
+    try {
+      if (!discovered || typeof discovered.id !== "string") {
+        throw new Error("invalid discovered model");
+      }
+      // One shared resolution drives both transport and reasoning variants so
+      // they can never come from different providers.
+      const resolved = resolveDirectModel(catalog, discovered.id, {
+        warn: options.warn,
+        warnedRoutes,
+      });
+      const variants = selectEfforts(resolved.candidate?.efforts ?? [], discovered).map(
+        (effort) => ({ id: effort, settings: { reasoningEffort: effort } }),
+      );
+      prepared = {
+        route: discovered.id,
+        name: displayName(discovered.id),
+        transport: resolved.package,
+        variants,
+        limit:
+          discovered.contextLimit === undefined && discovered.outputLimit === undefined
+            ? undefined
+            : {
+                ...(discovered.contextLimit === undefined
+                  ? {}
+                  : { context: discovered.contextLimit }),
+                ...(discovered.outputLimit === undefined
+                  ? {}
+                  : { output: discovered.outputLimit }),
+              },
+        resolution: {
+          route: discovered.id,
+          providerID: resolved.candidate?.providerID,
+          modelID: directModelID(discovered.id),
+          package: resolved.package,
+          packageSource: resolved.packageSource,
+          candidateCount: resolved.candidateCount,
+        },
+      };
+    } catch {
+      skipped += 1;
+      continue;
+    }
 
     try {
-      options.onResolved?.({
-        route: discovered.id,
-        providerID: resolved.candidate?.providerID,
-        modelID: directModelID(discovered.id),
-        package: resolved.package,
-        packageSource: resolved.packageSource,
-        candidateCount: resolved.candidateCount,
-      });
+      options.onResolved?.(prepared.resolution);
     } catch {
       // Resolution observability must never break registration.
     }
 
     try {
-      catalog.model.update(PROVIDER_ID, discovered.id, (model) => {
-        model.name = displayName(discovered.id);
-        model.modelID = discovered.id as unknown as typeof model.modelID;
-        model.package = resolved.package;
+      const update = prepared;
+      catalog.model.update(PROVIDER_ID, update.route, (model) => {
+        model.name = update.name;
+        model.modelID = update.route as unknown as typeof model.modelID;
+        model.package = update.transport;
         model.enabled = true;
         model.status = "active";
-        model.variants = variants as unknown as typeof model.variants;
-        if (discovered.contextLimit !== undefined || discovered.outputLimit !== undefined) {
-          model.limit = {
-            ...model.limit,
-            ...(discovered.contextLimit === undefined ? {} : { context: discovered.contextLimit }),
-            ...(discovered.outputLimit === undefined ? {} : { output: discovered.outputLimit }),
-          } as typeof model.limit;
+        model.variants = update.variants as unknown as typeof model.variants;
+        if (update.limit !== undefined) {
+          model.limit = { ...model.limit, ...update.limit } as typeof model.limit;
         }
       });
+      registered += 1;
     } catch {
       skipped += 1;
     }
@@ -394,4 +475,6 @@ export const register9RouterCatalog = (
       `opencode-9router-v2: skipped ${skipped} model(s) that failed to register`,
     );
   }
+
+  return { registered, skipped };
 };

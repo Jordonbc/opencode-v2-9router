@@ -567,6 +567,35 @@ test("ignores a throwing onTruncated callback", async () => {
   );
 });
 
+test("reports a TimeoutError rejection as a timeout without a live signal", async () => {
+  const timeoutError = new DOMException("operation timed out", "TimeoutError");
+  const fetcher: typeof fetch = async () => {
+    throw timeoutError;
+  };
+  await assert.rejects(
+    discoverModels({ apiKey: "k", baseURL }, { fetch: fetcher, timeoutMs: 60_000 }),
+    (error: unknown) => {
+      assert.ok(error instanceof DiscoveryError);
+      assert.match(error.message, /timed out/u);
+      return true;
+    },
+  );
+});
+
+test("reports a non-Error rejection without leaking details", async () => {
+  const fetcher: typeof fetch = async () => {
+    throw undefined;
+  };
+  await assert.rejects(
+    discoverModels({ apiKey: "k", baseURL }, { fetch: fetcher }),
+    (error: unknown) => {
+      assert.ok(error instanceof DiscoveryError);
+      assert.equal(error.message, "9router model discovery failed");
+      return true;
+    },
+  );
+});
+
 test("wraps an invalid timeout option instead of throwing RangeError", async () => {
   const fetcher: typeof fetch = async () => new Response('{"data":[]}', { status: 200 });
   for (const timeoutMs of [Number.NaN, -1, Number.POSITIVE_INFINITY]) {

@@ -357,6 +357,32 @@ test("empty-string environment values fall back to the file", async () => {
   });
 });
 
+test("whitespace-only environment values fall back to the file", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "opencode-9router-blank-env-"));
+  const fallbackPath = join(directory, "9router.conf");
+  await writeFile(
+    fallbackPath,
+    "OPENCODE_9ROUTER_URL=http://file:20128/v1\nOPENCODE_9ROUTER_API_KEY=file-key\n",
+  );
+
+  const result = await loadConfig(
+    { OPENCODE_9ROUTER_URL: "   ", OPENCODE_9ROUTER_API_KEY: "  \t  " },
+    fallbackPath,
+  );
+  assert.deepEqual(result, {
+    ok: true,
+    value: { apiKey: "file-key", baseURL: "http://file:20128/v1" },
+  });
+
+  const missing = join(directory, "missing.conf");
+  const noFallback = await loadConfig(
+    { OPENCODE_9ROUTER_URL: "   ", OPENCODE_9ROUTER_API_KEY: "secret" },
+    missing,
+  );
+  assert.equal(noFallback.ok, false);
+  if (!noFallback.ok) assert.match(noFallback.error.message, /URL is not configured/u);
+});
+
 test("exposes the shared fallback path and ConfigError shape", () => {
   assert.ok(CONFIG_FILE.endsWith(join(".config", "environment.d", "9router.conf")));
   const error = new ConfigError("example");

@@ -36,8 +36,28 @@ const safeSink =
     }
   };
 
+const stripUndefined = (overrides: PartialDependencies): PartialDependencies => {
+  const cleaned: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(overrides)) {
+    if (value !== undefined) cleaned[key] = value;
+  }
+  return cleaned as PartialDependencies;
+};
+
+const isDiscoveredModel = (value: unknown): value is DiscoveredModel => {
+  if (!value || typeof value !== "object") return false;
+  const model = value as Record<string, unknown>;
+  return (
+    typeof model.id === "string" &&
+    typeof model.reasoning === "boolean" &&
+    typeof model.thinkingCanDisable === "boolean" &&
+    (model.contextLimit === undefined || typeof model.contextLimit === "number") &&
+    (model.outputLimit === undefined || typeof model.outputLimit === "number")
+  );
+};
+
 export const createPlugin = (overrides: PartialDependencies = {}): Plugin.Plugin => {
-  const dependencies: Dependencies = { ...defaults, ...overrides };
+  const dependencies: Dependencies = { ...defaults, ...stripUndefined(overrides) };
   return Plugin.define({
     id: PLUGIN_ID,
     setup: async ({ catalog }) => {
@@ -65,11 +85,11 @@ export const createPlugin = (overrides: PartialDependencies = {}): Plugin.Plugin
             );
           },
         });
-        if (!Array.isArray(discovered)) {
+        if (!Array.isArray(discovered) || !discovered.every(isDiscoveredModel)) {
           warn("opencode-9router-v2: model discovery failed; 9Router will be unavailable");
           return;
         }
-        models = discovered;
+        models = [...discovered];
       } catch {
         warn("opencode-9router-v2: model discovery failed; 9Router will be unavailable");
         return;
@@ -80,9 +100,11 @@ export const createPlugin = (overrides: PartialDependencies = {}): Plugin.Plugin
         return;
       }
 
+      let registered = 0;
+      let skipped = 0;
       try {
         await catalog.transform((draft) => {
-          register9RouterCatalog(draft, result.value, models, {
+          const outcome = register9RouterCatalog(draft, result.value, models, {
             warn,
             onResolved: (resolved) => {
               if (resolved.route !== MUSE_DEBUG_ROUTE) return;
@@ -96,13 +118,19 @@ export const createPlugin = (overrides: PartialDependencies = {}): Plugin.Plugin
               );
             },
           });
+          registered = outcome.registered;
+          skipped = outcome.skipped;
         });
       } catch {
         warn("opencode-9router-v2: failed to register 9Router models; continuing without them");
         return;
       }
 
-      info(`opencode-9router-v2: registered ${models.length} model(s) from 9Router`);
+      info(
+        skipped > 0
+          ? `opencode-9router-v2: registered ${registered} model(s) from 9Router (skipped ${skipped} model(s))`
+          : `opencode-9router-v2: registered ${registered} model(s) from 9Router`,
+      );
     },
   });
 };

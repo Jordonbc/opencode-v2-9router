@@ -209,7 +209,12 @@ export const discoverModels = async (
     return models;
   } catch (error) {
     if (error instanceof DiscoveryError) throw error;
-    if (signal.aborted) throw new DiscoveryError("9router model discovery timed out");
+    // A fetch aborted by our timeout signal rejects with that signal's reason,
+    // a DOMException named "TimeoutError". Any other abort or failure is
+    // reported generically.
+    if ((error as { name?: unknown } | null | undefined)?.name === "TimeoutError") {
+      throw new DiscoveryError("9router model discovery timed out");
+    }
     throw new DiscoveryError("9router model discovery failed");
   }
 };
