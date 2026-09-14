@@ -26,5 +26,3 @@ Single-package TypeScript ESM OpenCode V2 plugin (`src/index.ts`). Strict TS, `N
 - Copy only `context_length`/`max_completion_tokens` (or capability equivalents) into limits; leave pricing/other metadata at SDK defaults.
 - `createPlugin(deps)` accepts injectable `{config, discover, warn}` — use this in tests instead of network/env.
 - `dist/`, `node_modules/`, `*.tgz` are gitignored; package ships `src/` directly to OpenCode's Bun runtime, so keep lifecycle scripts out of `package.json`.
-
-@RTK.md
