@@ -11,7 +11,7 @@ OpenCode V2 is still a preview. Re-check the plugin SDK contract before upgradin
 - Calls `GET <baseURL>/models` once at plugin setup with Bearer authentication.
 - Registers provider `9router` as `9Router` and preserves upstream IDs exactly.
 - Exposes OpenCode reasoning variants for models whose live 9Router metadata advertises reasoning.
-- Routes each model through `@ai-sdk/openai-compatible` using the configured `/v1` base URL.
+- Mirrors the transport/package metadata from the matching direct OpenCode model where possible (for example `aisdk:@ai-sdk/openai` for Responses-native models, `aisdk:@ai-sdk/anthropic` for Anthropic-native models), with `aisdk:@ai-sdk/openai-compatible` as fallback. The 9router `baseURL`/`apiKey` are always used; OpenCode is never pointed directly at `opencode.ai`.
 - Warns once and lets OpenCode continue if configuration or discovery fails.
 
 It does not execute commands, scan projects, cache results, or contact metadata services.
@@ -80,7 +80,7 @@ Then restart OpenCode. Removing the plugin does not modify `~/.config/environmen
 
 This is not a V1 config-hook plugin. Its default export is a V2 definition with an `id` and `setup` function from `@opencode-ai/plugin`. Setup registers a replayable `catalog.transform`.
 
-The provider and every discovered model set `package` to `aisdk:@ai-sdk/openai-compatible`. The `aisdk:` catalog discriminator selects OpenCode's AI SDK resolver, which normalizes the remainder to the official OpenAI-compatible provider package. Provider `settings.baseURL` selects the configured gateway, while `settings.apiKey` is resolved by that transport into `Authorization: Bearer <key>`. Each model's catalog key remains its full discovered route and `modelID` repeats that exact value, which is the identifier sent upstream. These fields are required by the beta-19425 resolver; the older `model.api` shape belongs to a different V2 snapshot.
+The provider sets `package` to `aisdk:@ai-sdk/openai-compatible` as the generic fallback. Each discovered model sets `package` to the matching direct OpenCode model's transport when one exists, otherwise the same compatible fallback. The `aisdk:` catalog discriminator selects OpenCode's AI SDK resolver, which normalizes the remainder to the official provider package. For example `ocg/muse-spark-1.3-contributor` mirrors `aisdk:@ai-sdk/openai` so OpenCode sends native Responses format instead of chat format that would require `openai→openai-responses` translation. Provider `settings.baseURL` always selects the configured 9router gateway, while `settings.apiKey` is resolved by that transport into `Authorization: Bearer <key>`; direct-model connection settings are never copied, so traffic stays on 9router. Each model's catalog key remains its full discovered route and `modelID` repeats that exact value, which is the identifier sent upstream. These fields are required by the beta-19425 resolver; the older `model.api` shape belongs to a different V2 snapshot.
 
 For a discovered route that matches a model already known to OpenCode, the plugin mirrors that model's exact OpenAI-compatible reasoning-effort variants. This prevents the plugin from inventing `max` for a model whose direct OpenCode entry stops at `xhigh`. If no direct model matches, the conservative fallback is `low`, `medium`, `high`, and `xhigh`, plus `none` only when 9Router advertises `thinkingCanDisable`. Models that do not advertise reasoning receive no reasoning variants.
 

@@ -3,6 +3,7 @@ import test from "node:test";
 import type { CatalogDraft } from "../src/provider.js";
 import {
   directModelID,
+  directModelPackage,
   directReasoningEfforts,
   displayName,
   PROVIDER_ID,
@@ -57,6 +58,38 @@ const withDirectModel = (id: string, efforts: readonly string[]) => {
         {
           id,
           variants: efforts.map((effort) => ({
+            id: effort,
+            settings: { reasoningEffort: effort },
+          })),
+        },
+      ],
+    ]),
+  };
+  catalog.draft.provider.list = () => [direct] as never;
+  return catalog;
+};
+
+const withDirectEntry = (options: {
+  directID: string;
+  modelPackage?: string;
+  providerPackage?: string;
+  providerID?: string;
+  efforts?: readonly string[];
+}) => {
+  const catalog = createCatalog();
+  const direct = {
+    provider: {
+      id: options.providerID ?? "opencode",
+      name: "Direct",
+      package: options.providerPackage ?? "aisdk:@ai-sdk/openai-compatible",
+    },
+    models: new Map([
+      [
+        options.directID,
+        {
+          id: options.directID,
+          ...(options.modelPackage === undefined ? {} : { package: options.modelPackage }),
+          variants: (options.efforts ?? []).map((effort) => ({
             id: effort,
             settings: { reasoningEffort: effort },
           })),
@@ -274,7 +307,7 @@ test("registers the exact V2 provider and model transport shape", () => {
     id,
     modelID: id,
     name: "Muse Spark 1.3 Contributor (ocg)",
-    package: PROVIDER_PACKAGE,
+    package: "aisdk:@ai-sdk/openai",
     enabled: true,
     status: "active",
     variants: [
@@ -348,4 +381,172 @@ test("copies a partial limit without touching the other default", () => {
   );
 
   assert.deepEqual(catalog.models.get("c/model")?.limit, { context: 123, output: 0 });
+});
+
+test("mirrors the direct model package for Muse Spark", () => {
+  const catalog = withDirectEntry({
+    directID: "muse-spark-1.3-contributor",
+    modelPackage: "aisdk:@ai-sdk/openai",
+    providerPackage: "aisdk:@ai-sdk/openai-compatible",
+  });
+
+  assert.equal(directModelPackage(catalog.draft, "ocg/muse-spark-1.3-contributor"), "aisdk:@ai-sdk/openai");
+
+  register9RouterCatalog(
+    catalog.draft,
+    { apiKey: "secret-key", baseURL: "http://10.0.0.1:20128/v1" },
+    [{ id: "ocg/muse-spark-1.3-contributor", reasoning: false, thinkingCanDisable: false }],
+  );
+
+  assert.equal(catalog.models.get("ocg/muse-spark-1.3-contributor")?.package, "aisdk:@ai-sdk/openai");
+});
+
+test("mirrors an Anthropic-native direct model package", () => {
+  const catalog = withDirectEntry({
+    directID: "claude-sonnet-4-5",
+    modelPackage: "aisdk:@ai-sdk/anthropic",
+  });
+
+  assert.equal(directModelPackage(catalog.draft, "ocg/claude-sonnet-4-5"), "aisdk:@ai-sdk/anthropic");
+
+  register9RouterCatalog(
+    catalog.draft,
+    { apiKey: "k", baseURL: "http://10.0.0.1:20128/v1" },
+    [{ id: "ocg/claude-sonnet-4-5", reasoning: false, thinkingCanDisable: false }],
+  );
+
+  assert.equal(catalog.models.get("ocg/claude-sonnet-4-5")?.package, "aisdk:@ai-sdk/anthropic");
+});
+
+test("keeps an OpenAI-compatible direct model on the compatible transport", () => {
+  const catalog = withDirectEntry({
+    directID: "gpt-5-mini",
+    modelPackage: "aisdk:@ai-sdk/openai-compatible",
+  });
+
+  assert.equal(
+    directModelPackage(catalog.draft, "ocg/gpt-5-mini"),
+    "aisdk:@ai-sdk/openai-compatible",
+  );
+
+  register9RouterCatalog(
+    catalog.draft,
+    { apiKey: "k", baseURL: "http://10.0.0.1:20128/v1" },
+    [{ id: "ocg/gpt-5-mini", reasoning: false, thinkingCanDisable: false }],
+  );
+
+  assert.equal(catalog.models.get("ocg/gpt-5-mini")?.package, PROVIDER_PACKAGE);
+});
+
+test("falls back to the generic compatible package for unknown models", () => {
+  const catalog = createCatalog();
+  assert.equal(directModelPackage(catalog.draft, "ocg/unknown-model"), PROVIDER_PACKAGE);
+
+  register9RouterCatalog(
+    catalog.draft,
+    { apiKey: "k", baseURL: "http://10.0.0.1:20128/v1" },
+    [{ id: "ocg/unknown-model", reasoning: false, thinkingCanDisable: false }],
+  );
+
+  assert.equal(catalog.models.get("ocg/unknown-model")?.package, PROVIDER_PACKAGE);
+  assert.equal(catalog.providers.get("9router")?.package, PROVIDER_PACKAGE);
+});
+
+test("prefers the model package over its provider package and falls back to the provider", () => {
+  const preferred = withDirectEntry({
+    directID: "m",
+    modelPackage: "aisdk:@ai-sdk/openai",
+    providerPackage: "aisdk:@ai-sdk/anthropic",
+  });
+  assert.equal(directModelPackage(preferred.draft, "ocg/m"), "aisdk:@ai-sdk/openai");
+
+  const providerFallback = withDirectEntry({
+    directID: "m",
+    providerPackage: "aisdk:@ai-sdk/anthropic",
+  });
+  assert.equal(directModelPackage(providerFallback.draft, "ocg/m"), "aisdk:@ai-sdk/anthropic");
+});
+
+test("ignores 9router records when mirroring the transport package", () => {
+  const catalog = createCatalog();
+  catalog.draft.provider.list = () => [
+    {
+      provider: { id: "9router", package: "aisdk:@ai-sdk/openai-compatible" },
+      models: new Map([["m", { id: "m", package: "aisdk:@ai-sdk/openai", variants: [] }]]),
+    },
+    {
+      provider: { id: "opencode", package: "aisdk:@ai-sdk/anthropic" },
+      models: new Map([["m", { id: "m", package: "aisdk:@ai-sdk/anthropic", variants: [] }]]),
+    },
+  ] as never;
+
+  assert.equal(directModelPackage(catalog.draft, "ocg/m"), "aisdk:@ai-sdk/anthropic");
+});
+
+test("mirrors transport through the -review direct ID mapping", () => {
+  const catalog = withDirectEntry({
+    directID: "foo",
+    modelPackage: "aisdk:@ai-sdk/openai",
+  });
+
+  assert.equal(directModelPackage(catalog.draft, "ocg/foo-review"), "aisdk:@ai-sdk/openai");
+});
+
+test("mirrored transport keeps the 9router baseURL and apiKey", () => {
+  const catalog = withDirectEntry({
+    directID: "muse-spark-1.3-contributor",
+    modelPackage: "aisdk:@ai-sdk/openai",
+  });
+  // Simulate a direct record that also carries upstream connection settings.
+  const record = (catalog.draft.provider.list() as unknown as Array<Record<string, unknown>>)[0];
+  const models = record?.["models"] as Map<string, Record<string, unknown>>;
+  const direct = models.get("muse-spark-1.3-contributor");
+  if (direct) {
+    direct["settings"] = { baseURL: "https://opencode.ai/zen/go/v1", apiKey: "direct-key" };
+  }
+
+  register9RouterCatalog(
+    catalog.draft,
+    { apiKey: "router-key", baseURL: "http://10.0.0.1:20128/v1" },
+    [{ id: "ocg/muse-spark-1.3-contributor", reasoning: false, thinkingCanDisable: false }],
+  );
+
+  assert.deepEqual(catalog.providers.get("9router")?.settings, {
+    apiKey: "router-key",
+    baseURL: "http://10.0.0.1:20128/v1",
+  });
+  const registered = catalog.models.get("ocg/muse-spark-1.3-contributor");
+  assert.equal(registered?.package, "aisdk:@ai-sdk/openai");
+  assert.equal(registered?.modelID, "ocg/muse-spark-1.3-contributor");
+  assert.deepEqual((registered as { settings?: unknown } | undefined)?.settings, undefined);
+});
+
+test("registration does not mutate the direct model", () => {
+  const catalog = withDirectEntry({
+    directID: "muse-spark-1.3-contributor",
+    modelPackage: "aisdk:@ai-sdk/openai",
+    providerPackage: "aisdk:@ai-sdk/openai",
+    efforts: ["low", "medium"],
+  });
+  const before = JSON.stringify(catalog.draft.provider.list());
+
+  register9RouterCatalog(
+    catalog.draft,
+    { apiKey: "k", baseURL: "http://10.0.0.1:20128/v1" },
+    [{
+      id: "ocg/muse-spark-1.3-contributor",
+      reasoning: true,
+      thinkingCanDisable: false,
+      contextLimit: 10,
+      outputLimit: 20,
+    }],
+  );
+
+  assert.equal(JSON.stringify(catalog.draft.provider.list()), before);
+  // Reasoning mirroring still works alongside transport mirroring.
+  assert.deepEqual(
+    (catalog.models.get("ocg/muse-spark-1.3-contributor")?.variants as Array<{ id: string }>)
+      .map((variant) => variant.id),
+    ["low", "medium"],
+  );
 });

@@ -58,6 +58,26 @@ export const directReasoningEfforts = (
   return [];
 };
 
+export const directModelPackage = (catalog: CatalogDraft, routeID: string): string => {
+  const modelID = directModelID(routeID);
+
+  for (const record of catalog.provider.list()) {
+    if (String(record.provider.id) === PROVIDER_ID) continue;
+
+    const direct = record.models.get(modelID);
+    if (!direct) continue;
+
+    if (typeof direct.package === "string" && direct.package.length > 0) {
+      return direct.package;
+    }
+    if (typeof record.provider.package === "string" && record.provider.package.length > 0) {
+      return record.provider.package;
+    }
+  }
+
+  return PROVIDER_PACKAGE;
+};
+
 export const reasoningVariants = (
   catalog: CatalogDraft,
   model: Pick<DiscoveredModel, "id" | "reasoning" | "thinkingCanDisable">,
@@ -94,10 +114,11 @@ export const register9RouterCatalog = (
 
   for (const discovered of models) {
     const variants = reasoningVariants(catalog, discovered);
+    const transport = directModelPackage(catalog, discovered.id);
     catalog.model.update(PROVIDER_ID, discovered.id, (model) => {
       model.name = displayName(discovered.id);
       model.modelID = discovered.id as unknown as typeof model.modelID;
-      model.package = PROVIDER_PACKAGE;
+      model.package = transport;
       model.enabled = true;
       model.status = "active";
       model.variants = variants as unknown as typeof model.variants;
