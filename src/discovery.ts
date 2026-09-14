@@ -26,10 +26,10 @@ export type DiscoveredModel = {
   readonly outputLimit?: number;
 };
 
-const isModelID = (value: unknown): value is string => {
+export const isModelID = (value: unknown): value is string => {
   if (typeof value !== "string") return false;
   if (!value || value !== value.trim() || value.length > MAX_MODEL_ID_LENGTH) return false;
-  return !/[\u0000-\u001f\u007f]/u.test(value);
+  return !/\p{Cc}/u.test(value);
 };
 
 const tokenLimit = (...values: unknown[]): number | undefined => {
@@ -87,10 +87,12 @@ export const parseModelsPayload = (
   const data = (payload as { data: unknown[] }).data;
 
   const models = new Map<string, DiscoveredModel>();
+  const seen = new Set<string>();
   let dropped = 0;
   for (const item of data) {
     const model = parseModel(item);
-    if (!model || models.has(model.id)) continue;
+    if (!model || seen.has(model.id)) continue;
+    seen.add(model.id);
     if (models.size >= maxModels) {
       dropped += 1;
       continue;
@@ -109,9 +111,18 @@ const cancelReader = async (reader: ReadableStreamDefaultReader<Uint8Array>): Pr
   }
 };
 
+const cancelResponseBody = async (response: Response): Promise<void> => {
+  try {
+    await response.body?.cancel();
+  } catch {
+    // Best-effort cleanup must never replace the original discovery error.
+  }
+};
+
 const readBoundedBody = async (response: Response, maxBytes: number): Promise<string> => {
   const declaredSize = Number(response.headers.get("content-length"));
   if (Number.isFinite(declaredSize) && declaredSize > maxBytes) {
+    await cancelResponseBody(response);
     throw new DiscoveryError("9router /models response is too large");
   }
   if (!response.body) return "";
@@ -187,6 +198,7 @@ export const discoverModels = async (
     });
 
     if (!response.ok) {
+      await cancelResponseBody(response);
       throw new DiscoveryError(`9router model discovery returned HTTP ${response.status}`);
     }
 

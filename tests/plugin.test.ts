@@ -550,6 +550,17 @@ test("discover elements with invalid shapes warn instead of registering", async 
     [{ id: "a", reasoning: false, thinkingCanDisable: 1 }],
     [{ id: "a", reasoning: false, thinkingCanDisable: false, contextLimit: "100" }],
     [{ id: "a", reasoning: false, thinkingCanDisable: false, outputLimit: "100" }],
+    [{ id: `a${String.fromCharCode(0x85)}b`, reasoning: false, thinkingCanDisable: false }],
+    [{ id: "a", reasoning: false, thinkingCanDisable: false, contextLimit: 0 }],
+    [{ id: "a", reasoning: false, thinkingCanDisable: false, contextLimit: -1 }],
+    [{ id: "a", reasoning: false, thinkingCanDisable: false, contextLimit: 1.5 }],
+    [{ id: "a", reasoning: false, thinkingCanDisable: false, contextLimit: Number.NaN }],
+    [{ id: "a", reasoning: false, thinkingCanDisable: false, contextLimit: Number.POSITIVE_INFINITY }],
+    [{ id: "a", reasoning: false, thinkingCanDisable: false, outputLimit: 0 }],
+    [{ id: "a", reasoning: false, thinkingCanDisable: false, outputLimit: -1 }],
+    [{ id: "a", reasoning: false, thinkingCanDisable: false, outputLimit: 1.5 }],
+    [{ id: "a", reasoning: false, thinkingCanDisable: false, outputLimit: Number.NaN }],
+    [{ id: "a", reasoning: false, thinkingCanDisable: false, outputLimit: Number.POSITIVE_INFINITY }],
   ];
   for (const payload of badPayloads) {
     const warnings: string[] = [];
@@ -571,6 +582,50 @@ test("discover elements with invalid shapes warn instead of registering", async 
       "opencode-9router-v2: model discovery failed; 9Router will be unavailable",
     ]);
   }
+});
+
+test("deduplicates ambiguous-route warnings across catalog replays", async () => {
+  const warnings: string[] = [];
+  let replay: ((draft: CatalogDraft) => void) | undefined;
+  await createPlugin({
+    config: async () => ({ ok: true, value: { ...okConfig } }),
+    discover: async () => [{ id: "route/model", reasoning: false, thinkingCanDisable: false }],
+    warn: (message) => warnings.push(message),
+    info: () => undefined,
+  }).setup({
+    catalog: {
+      transform: async (update: (draft: CatalogDraft) => void) => {
+        replay = update;
+        return { dispose: async () => undefined };
+      },
+    },
+  } as never);
+
+  const makeDraft = (): CatalogDraft => ({
+    provider: {
+      list: () => [
+        {
+          provider: { id: "a", package: "aisdk:@ai-sdk/openai" },
+          models: new Map([["model", { variants: [] }]]),
+        },
+        {
+          provider: { id: "b", package: "aisdk:@ai-sdk/anthropic" },
+          models: new Map([["model", { variants: [] }]]),
+        },
+      ],
+      update: (_id: string, apply: (provider: MutableRecord) => void) => apply({ settings: {} }),
+    },
+    model: {
+      update: (_providerID: string, _id: string, apply: (model: MutableRecord) => void) =>
+        apply({ limit: {} }),
+    },
+  } as unknown as CatalogDraft);
+
+  replay?.(makeDraft());
+  replay?.(makeDraft());
+  assert.deepEqual(warnings, [
+    "opencode-9router-v2: ambiguous direct-model packages for route/model; using aisdk:@ai-sdk/openai-compatible",
+  ]);
 });
 
 test("explicit undefined overrides fall back to the defaults", async () => {

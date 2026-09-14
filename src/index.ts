@@ -1,6 +1,11 @@
 import { Plugin } from "@opencode-ai/plugin";
 import { loadConfig, type ConfigResult } from "./config.js";
-import { discoverModels, MAX_MODELS, type DiscoveredModel } from "./discovery.js";
+import {
+  discoverModels,
+  isModelID,
+  MAX_MODELS,
+  type DiscoveredModel,
+} from "./discovery.js";
 import { register9RouterCatalog, MUSE_DEBUG_ROUTE } from "./provider.js";
 
 export const PLUGIN_ID = "opencode.9router";
@@ -47,12 +52,15 @@ const stripUndefined = (overrides: PartialDependencies): PartialDependencies => 
 const isDiscoveredModel = (value: unknown): value is DiscoveredModel => {
   if (!value || typeof value !== "object") return false;
   const model = value as Record<string, unknown>;
+  const validLimit = (limit: unknown): boolean =>
+    limit === undefined ||
+    (typeof limit === "number" && Number.isSafeInteger(limit) && limit > 0);
   return (
-    typeof model.id === "string" &&
+    isModelID(model.id) &&
     typeof model.reasoning === "boolean" &&
     typeof model.thinkingCanDisable === "boolean" &&
-    (model.contextLimit === undefined || typeof model.contextLimit === "number") &&
-    (model.outputLimit === undefined || typeof model.outputLimit === "number")
+    validLimit(model.contextLimit) &&
+    validLimit(model.outputLimit)
   );
 };
 
@@ -100,12 +108,14 @@ export const createPlugin = (overrides: PartialDependencies = {}): Plugin.Plugin
         return;
       }
 
+      const warnedRoutes = new Set<string>();
       let registered = 0;
       let skipped = 0;
       try {
         await catalog.transform((draft) => {
           const outcome = register9RouterCatalog(draft, result.value, models, {
             warn,
+            warnedRoutes,
             onResolved: (resolved) => {
               if (resolved.route !== MUSE_DEBUG_ROUTE) return;
               // Temporary observability for the Muse transport issue.

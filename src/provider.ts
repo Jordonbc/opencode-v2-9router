@@ -101,6 +101,7 @@ export type ResolveOptions = {
 
 export type RegisterOptions = {
   readonly warn?: (message: string) => void;
+  readonly warnedRoutes?: Set<string>;
   readonly onResolved?: (info: ResolutionInfo) => void;
 };
 
@@ -395,7 +396,7 @@ export const register9RouterCatalog = (
 
   let registered = 0;
   let skipped = 0;
-  const warnedRoutes = new Set<string>();
+  const warnedRoutes = options.warnedRoutes ?? new Set<string>();
   for (const discovered of models) {
     // Resolve and validate everything before touching the draft, so the
     // update callback below only performs prepared assignments and can never

@@ -8,6 +8,7 @@ import {
   MAX_MODELS,
   discoverModels,
   DiscoveryError,
+  isModelID,
   parseModelsPayload,
 } from "../src/discovery.js";
 
@@ -134,6 +135,15 @@ test("truncates payloads beyond maxModels instead of failing", () => {
   assert.equal(withDupes.dropped, 1);
 });
 
+test("counts each omitted model ID once when duplicates exceed the limit", () => {
+  const result = parseModelsPayload(
+    { data: [{ id: "a" }, { id: "b" }, { id: "b" }, { id: "c" }, { id: "c" }] },
+    1,
+  );
+  assert.deepEqual(result.models.map((model) => model.id), ["a"]);
+  assert.equal(result.dropped, 2);
+});
+
 test("rejects every non-object payload shape", () => {
   for (const payload of [null, undefined, "data", 42, [], { data: null }, { data: "x" }, {}]) {
     assert.throws(() => parseModelsPayload(payload), DiscoveryError);
@@ -193,6 +203,19 @@ test("filters IDs with whitespace, control characters, or excessive length", () 
         { id: valid512, reasoning: false, thinkingCanDisable: false },
         { id: "inner space allowed", reasoning: false, thinkingCanDisable: false },
       ],
+      dropped: 0,
+    },
+  );
+});
+
+test("rejects Unicode Cc model IDs while preserving internal ordinary spaces", () => {
+  assert.equal(isModelID("model with spaces"), true);
+  assert.equal(isModelID(`model${String.fromCharCode(0x85)}name`), false);
+  assert.equal(isModelID(`model${String.fromCharCode(0x9f)}name`), false);
+  assert.deepEqual(
+    parseModelsPayload({ data: [{ id: "model with spaces" }, { id: `bad${String.fromCharCode(0x85)}id` }] }),
+    {
+      models: [{ id: "model with spaces", reasoning: false, thinkingCanDisable: false }],
       dropped: 0,
     },
   );
@@ -448,6 +471,61 @@ test("rejects an oversized declared content-length before reading", async () => 
     discoverModels({ apiKey: "k", baseURL }, { fetch: fetcher, maxBytes: 5 }),
     /too large/u,
   );
+});
+
+test("cancels response bodies before early HTTP and declared-size failures", async () => {
+  for (const failure of ["http", "size"] as const) {
+    let cancelled = false;
+    const response = {
+      ok: failure !== "http",
+      status: failure === "http" ? 503 : 200,
+      headers: new Headers(failure === "size" ? { "content-length": "100" } : {}),
+      body: {
+        cancel: async () => {
+          cancelled = true;
+        },
+      },
+    } as unknown as Response;
+
+    await assert.rejects(
+      discoverModels(
+        { apiKey: "k", baseURL },
+        { fetch: async () => response, maxBytes: failure === "size" ? 5 : MAX_DISCOVERY_BYTES },
+      ),
+      failure === "http" ? /HTTP 503/u : /too large/u,
+    );
+    assert.equal(cancelled, true);
+  }
+});
+
+test("preserves early discovery errors when response cancellation fails", async () => {
+  for (const failure of ["http", "size"] as const) {
+    const response = {
+      ok: failure !== "http",
+      status: failure === "http" ? 503 : 200,
+      headers: new Headers(failure === "size" ? { "content-length": "100" } : {}),
+      body: {
+        cancel: async () => {
+          throw new Error("response body must never leak");
+        },
+      },
+    } as unknown as Response;
+
+    await assert.rejects(
+      discoverModels(
+        { apiKey: "k", baseURL },
+        { fetch: async () => response, maxBytes: failure === "size" ? 5 : MAX_DISCOVERY_BYTES },
+      ),
+      (error: unknown) => {
+        assert.ok(error instanceof DiscoveryError);
+        assert.equal(error.message, failure === "http"
+          ? "9router model discovery returned HTTP 503"
+          : "9router /models response is too large");
+        assert.doesNotMatch(error.message, /response body must never leak/u);
+        return true;
+      },
+    );
+  }
 });
 
 test("accepts a declared content-length at exactly the limit", async () => {
