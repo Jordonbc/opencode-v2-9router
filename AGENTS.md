@@ -17,7 +17,7 @@ Single-package TypeScript ESM OpenCode V2 plugin (`src/index.ts`). Strict TS, `N
 - `src/index.ts` — default export is `createPlugin()` V2 definition (`id: opencode.9router`). `setup` registers one replayable `catalog.transform`; fail-soft (warn once via `console.warn`, return, never throw).
 - `src/config.ts` — env `OPENCODE_9ROUTER_URL` / `OPENCODE_9ROUTER_API_KEY`, per-key fallback to `~/.config/environment.d/9router.conf`. Env wins. URL must be `http(s)`, end in `/v1`, no credentials/query/fragment.
 - `src/discovery.ts` — single `GET <baseURL>/models` with Bearer auth, `redirect: "error"`, 5s timeout, 1 MiB cap. Keeps the first 1000 usable models and reports the dropped count via `onTruncated`. Dedupes by ID, preserves upstream IDs exactly, ignores IDs with whitespace/control chars or >512 chars. Releases the reader lock on every path; cancels the stream on failures.
-- `src/provider.ts` — registers provider `9router` (`9Router`) with `package: aisdk:@ai-sdk/openai-compatible`; non-reasoning models set `package` the same while reasoning models use `@opencode/ai/providers/openai-compatible/responses` so the gateway does passthrough instead of `openai→openai-responses` translation, `modelID` = full discovered route, name derived from last `/` segment. `model.api` shape is a stale snapshot — do not use.
+- `src/provider.ts` — registers provider `9router` (`9Router`) with `package: aisdk:@ai-sdk/openai-compatible`; each model sets `package` the same, `modelID` = full discovered route, name derived from last `/` segment. `model.api` shape is a stale snapshot — do not use.
 
 ## Gotchas
 

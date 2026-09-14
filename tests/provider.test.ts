@@ -8,7 +8,6 @@ import {
   PROVIDER_ID,
   PROVIDER_NAME,
   PROVIDER_PACKAGE,
-  PROVIDER_RESPONSES_PACKAGE,
   reasoningVariants,
   register9RouterCatalog,
 } from "../src/provider.js";
@@ -73,7 +72,6 @@ test("exposes the documented provider identity", () => {
   assert.equal(PROVIDER_ID, "9router");
   assert.equal(PROVIDER_NAME, "9Router");
   assert.equal(PROVIDER_PACKAGE, "aisdk:@ai-sdk/openai-compatible");
-  assert.equal(PROVIDER_RESPONSES_PACKAGE, "@opencode/ai/providers/openai-compatible/responses");
 });
 
 test("creates a human-friendly name without changing the route ID", () => {
@@ -276,7 +274,7 @@ test("registers the exact V2 provider and model transport shape", () => {
     id,
     modelID: id,
     name: "Muse Spark 1.3 Contributor (ocg)",
-    package: PROVIDER_RESPONSES_PACKAGE,
+    package: PROVIDER_PACKAGE,
     enabled: true,
     status: "active",
     variants: [
