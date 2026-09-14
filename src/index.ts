@@ -19,11 +19,25 @@ const defaults: Dependencies = {
   info: (message) => console.info(message),
 };
 
-export const createPlugin = (dependencies: Dependencies = defaults): Plugin.Plugin =>
-  Plugin.define({
+type PartialDependencies = {
+  readonly config?: Dependencies["config"];
+  readonly discover?: Dependencies["discover"];
+  readonly warn?: Dependencies["warn"];
+  readonly info?: Dependencies["info"];
+};
+
+export const createPlugin = (overrides: PartialDependencies = {}): Plugin.Plugin => {
+  const dependencies: Dependencies = { ...defaults, ...overrides };
+  return Plugin.define({
     id: PLUGIN_ID,
     setup: async ({ catalog }) => {
-      const result = await dependencies.config();
+      let result: ConfigResult;
+      try {
+        result = await dependencies.config();
+      } catch {
+        dependencies.warn("opencode-9router-v2: invalid 9router configuration");
+        return;
+      }
       if (!result.ok) {
         dependencies.warn(`opencode-9router-v2: ${result.error.message}`);
         return;
@@ -57,8 +71,13 @@ export const createPlugin = (dependencies: Dependencies = defaults): Plugin.Plug
         return;
       }
 
-      dependencies.info?.(`opencode-9router-v2: registered ${models.length} model(s) from 9Router`);
+      try {
+        dependencies.info?.(`opencode-9router-v2: registered ${models.length} model(s) from 9Router`);
+      } catch {
+        // The info sink is optional observability; it must not break fail-soft setup.
+      }
     },
   });
+};
 
 export default createPlugin();

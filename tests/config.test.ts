@@ -333,6 +333,30 @@ test("defaults to process.env when no environment is passed", async () => {
   }
 });
 
+test("rejects empty query and fragment markers without values", () => {
+  assert.throws(() => normalizeBaseURL("https://example.com/v1?"), /must not contain/u);
+  assert.throws(() => normalizeBaseURL("https://example.com/v1#"), /must not contain/u);
+  assert.throws(() => normalizeBaseURL("https://example.com/v1?#"), /must not contain/u);
+});
+
+test("empty-string environment values fall back to the file", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "opencode-9router-empty-env-"));
+  const fallbackPath = join(directory, "9router.conf");
+  await writeFile(
+    fallbackPath,
+    "OPENCODE_9ROUTER_URL=http://file:20128/v1\nOPENCODE_9ROUTER_API_KEY=file-key\n",
+  );
+
+  const result = await loadConfig(
+    { OPENCODE_9ROUTER_URL: "", OPENCODE_9ROUTER_API_KEY: "" },
+    fallbackPath,
+  );
+  assert.deepEqual(result, {
+    ok: true,
+    value: { apiKey: "file-key", baseURL: "http://file:20128/v1" },
+  });
+});
+
 test("exposes the shared fallback path and ConfigError shape", () => {
   assert.ok(CONFIG_FILE.endsWith(join(".config", "environment.d", "9router.conf")));
   const error = new ConfigError("example");

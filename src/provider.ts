@@ -58,7 +58,19 @@ export const directReasoningEfforts = (
   return [];
 };
 
-export const directModelPackage = (catalog: CatalogDraft, routeID: string): string => {
+export type DirectTransport = {
+  /** ID of the non-9router provider record that supplied the match. */
+  readonly providerID: string;
+  /** ID of the direct model within that provider record. */
+  readonly modelID: string;
+  /** Transport package mirrored from the direct model (or its provider). */
+  readonly package: string;
+};
+
+export const directTransport = (
+  catalog: CatalogDraft,
+  routeID: string,
+): DirectTransport | undefined => {
   const modelID = directModelID(routeID);
 
   for (const record of catalog.provider.list()) {
@@ -68,15 +80,26 @@ export const directModelPackage = (catalog: CatalogDraft, routeID: string): stri
     if (!direct) continue;
 
     if (typeof direct.package === "string" && direct.package.length > 0) {
-      return direct.package;
+      return {
+        providerID: String(record.provider.id),
+        modelID,
+        package: direct.package,
+      };
     }
     if (typeof record.provider.package === "string" && record.provider.package.length > 0) {
-      return record.provider.package;
+      return {
+        providerID: String(record.provider.id),
+        modelID,
+        package: record.provider.package,
+      };
     }
   }
 
-  return PROVIDER_PACKAGE;
+  return undefined;
 };
+
+export const directModelPackage = (catalog: CatalogDraft, routeID: string): string =>
+  directTransport(catalog, routeID)?.package ?? PROVIDER_PACKAGE;
 
 export const reasoningVariants = (
   catalog: CatalogDraft,
@@ -122,8 +145,13 @@ export const register9RouterCatalog = (
       model.enabled = true;
       model.status = "active";
       model.variants = variants as unknown as typeof model.variants;
-      if (discovered.contextLimit !== undefined) model.limit.context = discovered.contextLimit;
-      if (discovered.outputLimit !== undefined) model.limit.output = discovered.outputLimit;
+      if (discovered.contextLimit !== undefined || discovered.outputLimit !== undefined) {
+        model.limit = {
+          ...model.limit,
+          ...(discovered.contextLimit === undefined ? {} : { context: discovered.contextLimit }),
+          ...(discovered.outputLimit === undefined ? {} : { output: discovered.outputLimit }),
+        } as typeof model.limit;
+      }
     });
   }
 };

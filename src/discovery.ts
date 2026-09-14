@@ -131,7 +131,11 @@ const readBoundedBody = async (response: Response, maxBytes: number): Promise<st
       text += decoder.decode(chunk.value, { stream: true });
     }
     const result = text + decoder.decode();
-    reader.releaseLock();
+    try {
+      reader.releaseLock();
+    } catch {
+      // The reader may already be released on some runtimes.
+    }
     return result;
   } catch (error) {
     await cancelReader(reader);
@@ -154,7 +158,20 @@ export const discoverModels = async (
   const maxBytes = options.maxBytes ?? MAX_DISCOVERY_BYTES;
   const maxModels = options.maxModels ?? MAX_MODELS;
   const onTruncated = options.onTruncated;
-  const signal = AbortSignal.timeout(timeoutMs);
+
+  let signal: AbortSignal;
+  try {
+    signal = AbortSignal.timeout(timeoutMs);
+  } catch {
+    throw new DiscoveryError("9router model discovery failed");
+  }
+
+  if (!Number.isSafeInteger(maxBytes) || maxBytes <= 0) {
+    throw new DiscoveryError("9router model discovery failed");
+  }
+  if (!Number.isSafeInteger(maxModels) || maxModels <= 0) {
+    throw new DiscoveryError("9router model discovery failed");
+  }
 
   try {
     const response = await fetcher(`${config.baseURL}/models`, {

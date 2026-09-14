@@ -54,10 +54,11 @@ export const parseEnvironmentFile = (contents: string): Record<string, string> =
 };
 
 export const normalizeBaseURL = (input: string): string => {
+  const trimmed = input.trim();
   let url: URL;
 
   try {
-    url = new URL(input.trim());
+    url = new URL(trimmed);
   } catch {
     throw new ConfigError("OPENCODE_9ROUTER_URL must be a valid URL");
   }
@@ -65,7 +66,14 @@ export const normalizeBaseURL = (input: string): string => {
   if (url.protocol !== "http:" && url.protocol !== "https:") {
     throw new ConfigError("OPENCODE_9ROUTER_URL must use http or https");
   }
-  if (url.username || url.password || url.search || url.hash) {
+  if (
+    url.username ||
+    url.password ||
+    url.search !== "" ||
+    url.hash !== "" ||
+    trimmed.includes("?") ||
+    trimmed.includes("#")
+  ) {
     throw new ConfigError("OPENCODE_9ROUTER_URL must not contain credentials, a query, or a fragment");
   }
 
@@ -94,8 +102,8 @@ export const loadConfig = async (
     const needsFallback =
       !environment.OPENCODE_9ROUTER_URL || !environment.OPENCODE_9ROUTER_API_KEY;
     const fallback = needsFallback ? await readFallback(fallbackPath) : {};
-    const rawURL = environment.OPENCODE_9ROUTER_URL ?? fallback.OPENCODE_9ROUTER_URL;
-    const apiKey = (environment.OPENCODE_9ROUTER_API_KEY ?? fallback.OPENCODE_9ROUTER_API_KEY)?.trim();
+    const rawURL = environment.OPENCODE_9ROUTER_URL || fallback.OPENCODE_9ROUTER_URL;
+    const apiKey = (environment.OPENCODE_9ROUTER_API_KEY || fallback.OPENCODE_9ROUTER_API_KEY)?.trim();
 
     if (!rawURL) {
       return { ok: false, error: new ConfigError("OPENCODE_9ROUTER_URL is not configured") };

@@ -5,6 +5,7 @@ import {
   directModelID,
   directModelPackage,
   directReasoningEfforts,
+  directTransport,
   displayName,
   PROVIDER_ID,
   PROVIDER_NAME,
@@ -372,6 +373,27 @@ test("preserves existing provider settings and registers models without limits",
   });
 });
 
+test("registers limits when the draft model has no limit object", () => {
+  const catalog = createCatalog();
+  catalog.draft.model.update = ((
+    _providerID: string,
+    id: string,
+    update: (model: MutableRecord) => void,
+  ) => {
+    const model = catalog.models.get(id) ?? { id, modelID: id };
+    catalog.models.set(id, model);
+    update(model);
+  }) as typeof catalog.draft.model.update;
+
+  register9RouterCatalog(
+    catalog.draft,
+    { apiKey: "k", baseURL: "http://10.0.0.1:20128/v1" },
+    [{ id: "c/model", reasoning: false, thinkingCanDisable: false, contextLimit: 123, outputLimit: 45 }],
+  );
+
+  assert.deepEqual(catalog.models.get("c/model")?.limit, { context: 123, output: 45 });
+});
+
 test("copies a partial limit without touching the other default", () => {
   const catalog = createCatalog();
   register9RouterCatalog(
@@ -548,5 +570,29 @@ test("registration does not mutate the direct model", () => {
     (catalog.models.get("ocg/muse-spark-1.3-contributor")?.variants as Array<{ id: string }>)
       .map((variant) => variant.id),
     ["low", "medium"],
+  );
+});
+
+test("reports which provider and direct model supply the mirrored transport", () => {
+  const catalog = withDirectEntry({
+    directID: "muse-spark-1.3-contributor",
+    modelPackage: "aisdk:@ai-sdk/openai",
+    providerPackage: "aisdk:@ai-sdk/openai-compatible",
+    providerID: "opencode",
+  });
+
+  assert.deepEqual(directTransport(catalog.draft, "ocg/muse-spark-1.3-contributor"), {
+    providerID: "opencode",
+    modelID: "muse-spark-1.3-contributor",
+    package: "aisdk:@ai-sdk/openai",
+  });
+  assert.equal(
+    directTransport(createCatalog().draft, "ocg/muse-spark-1.3-contributor"),
+    undefined,
+  );
+
+  const logged = directTransport(catalog.draft, "ocg/muse-spark-1.3-contributor");
+  console.info(
+    `9router transport for ocg/muse-spark-1.3-contributor: provider=${logged?.providerID} model=${logged?.modelID} package=${logged?.package}`,
   );
 });

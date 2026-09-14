@@ -536,6 +536,72 @@ test("wraps body read failures without leaking details", async () => {
   );
 });
 
+test("wraps an invalid timeout option instead of throwing RangeError", async () => {
+  const fetcher: typeof fetch = async () => new Response('{"data":[]}', { status: 200 });
+  for (const timeoutMs of [Number.NaN, -1, Number.POSITIVE_INFINITY]) {
+    await assert.rejects(
+      discoverModels({ apiKey: "k", baseURL }, { fetch: fetcher, timeoutMs }),
+      (error: unknown) => {
+        assert.ok(error instanceof DiscoveryError);
+        assert.equal(error.message, "9router model discovery failed");
+        assert.ok(!(error instanceof RangeError));
+        return true;
+      },
+    );
+  }
+});
+
+test("rejects invalid size caps instead of accumulating without bound", async () => {
+  const fetcher: typeof fetch = async () => new Response('{"data":[]}', { status: 200 });
+  for (const options of [
+    { maxBytes: Number.NaN },
+    { maxBytes: 0 },
+    { maxBytes: -5 },
+    { maxModels: Number.NaN },
+    { maxModels: 0 },
+    { maxModels: -2 },
+  ]) {
+    await assert.rejects(
+      discoverModels({ apiKey: "k", baseURL }, { fetch: fetcher, ...options }),
+      (error: unknown) => {
+        assert.ok(error instanceof DiscoveryError);
+        assert.equal(error.message, "9router model discovery failed");
+        return true;
+      },
+    );
+  }
+});
+
+test("tolerates a reader whose releaseLock throws on the success path", async () => {
+  const payload = '{"data":[{"id":"a"}]}';
+  const bytes = new TextEncoder().encode(payload);
+  const fetcher: typeof fetch = async () =>
+    ({
+      ok: true,
+      status: 200,
+      headers: new Headers(),
+      body: {
+        getReader: () => {
+          let consumed = false;
+          return {
+            read: async () => {
+              if (consumed) return { done: true, value: undefined };
+              consumed = true;
+              return { done: false, value: bytes };
+            },
+            cancel: async () => undefined,
+            releaseLock: () => {
+              throw new Error("already released");
+            },
+          };
+        },
+      },
+    }) as unknown as Response;
+  assert.deepEqual(await discoverModels({ apiKey: "k", baseURL }, { fetch: fetcher }), [
+    { id: "a", reasoning: false, thinkingCanDisable: false },
+  ]);
+});
+
 test("tolerates a reader whose cancel rejects", async () => {
   const fetcher: typeof fetch = async () =>
     ({
