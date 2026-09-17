@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { CatalogDraft } from "../src/provider.js";
+import type { ProviderEditor } from "../src/provider.js";
 import {
+  DEFAULT_CONTEXT_LIMIT,
+  DEFAULT_OUTPUT_LIMIT,
   directModelID,
   directModelPackage,
   directReasoningEfforts,
@@ -21,18 +23,24 @@ const createCatalog = () => {
   const providers = new Map<string, MutableRecord>();
   const models = new Map<string, MutableRecord>();
   const draft = {
-    provider: {
-      list: () => [],
-      get: () => undefined,
-      update: (id: string, update: (provider: MutableRecord) => void) => {
-        const provider = providers.get(id) ?? { id, name: id, package: "" };
-        providers.set(id, provider);
-        update(provider);
-      },
-      remove: () => undefined,
+    list: () => [],
+    get: (id: string) => providers.get(id) as never,
+    add: ({ info, models: initial }: { info: MutableRecord; models: readonly unknown[] }) => {
+      providers.set(info.id as string, { ...info, settings: { ...(info.settings as object ?? {}) } });
+      for (const model of initial) {
+        models.set((model as MutableRecord).id as string, model as MutableRecord);
+      }
     },
-    model: {
-      get: () => undefined,
+    update: (id: string, update: (provider: MutableRecord) => void) => {
+      const provider = providers.get(id) ?? { id, name: id, package: "" };
+      providers.set(id, provider);
+      update(provider);
+    },
+    remove: () => undefined,
+    models: {
+      set: (_providerID: string, infos: readonly MutableRecord[]) => {
+        for (const model of infos) models.set(model.id as string, model);
+      },
       update: (_providerID: string, id: string, update: (model: MutableRecord) => void) => {
         const model = models.get(id) ?? {
           id,
@@ -43,9 +51,8 @@ const createCatalog = () => {
         update(model);
       },
       remove: () => undefined,
-      default: { get: () => undefined, set: () => undefined },
     },
-  } as unknown as CatalogDraft;
+  } as unknown as ProviderEditor;
 
   return { draft, models, providers };
 };
@@ -53,7 +60,7 @@ const createCatalog = () => {
 const withDirectModel = (id: string, efforts: readonly string[]) => {
   const catalog = createCatalog();
   const direct = {
-    provider: { id: "opencode", name: "OpenCode", package: "aisdk:@ai-sdk/openai" },
+    provider: { id: "opencode", name: "OpenCode", package: "@opencode/ai/providers/openai" },
     models: new Map([
       [
         id,
@@ -67,7 +74,7 @@ const withDirectModel = (id: string, efforts: readonly string[]) => {
       ],
     ]),
   };
-  catalog.draft.provider.list = () => [direct] as never;
+  catalog.draft.list = () => [direct] as never;
   return catalog;
 };
 
@@ -83,7 +90,7 @@ const withDirectEntry = (options: {
     provider: {
       id: options.providerID ?? "opencode",
       name: "Direct",
-      package: options.providerPackage ?? "aisdk:@ai-sdk/openai-compatible",
+      package: options.providerPackage ?? "@opencode/ai/providers/openai-compatible",
     },
     models: new Map([
       [
@@ -99,14 +106,14 @@ const withDirectEntry = (options: {
       ],
     ]),
   };
-  catalog.draft.provider.list = () => [direct] as never;
+  catalog.draft.list = () => [direct] as never;
   return catalog;
 };
 
 test("exposes the documented provider identity", () => {
   assert.equal(PROVIDER_ID, "9router");
   assert.equal(PROVIDER_NAME, "9Router");
-  assert.equal(PROVIDER_PACKAGE, "aisdk:@ai-sdk/openai-compatible");
+  assert.equal(PROVIDER_PACKAGE, "@opencode/ai/providers/openai-compatible");
 });
 
 test("creates a human-friendly name without changing the route ID", () => {
@@ -218,7 +225,7 @@ test("falls back to default efforts when every mirrored effort is filtered out",
 
 test("ignores 9router records and entries without a matching model", () => {
   const catalog = createCatalog();
-  catalog.draft.provider.list = () => [
+  catalog.draft.list = () => [
     {
       provider: { id: "9router" },
       models: new Map([
@@ -236,7 +243,7 @@ test("ignores 9router records and entries without a matching model", () => {
 
 test("dedupes direct efforts and drops invalid variant settings", () => {
   const catalog = createCatalog();
-  catalog.draft.provider.list = () => [
+  catalog.draft.list = () => [
     {
       provider: { id: "opencode" },
       models: new Map([
@@ -262,7 +269,7 @@ test("dedupes direct efforts and drops invalid variant settings", () => {
 
 test("returns no direct efforts when variants carry no usable levels", () => {
   const catalog = createCatalog();
-  catalog.draft.provider.list = () => [
+  catalog.draft.list = () => [
     {
       provider: { id: "opencode" },
       models: new Map([["m", { id: "m", variants: [] }]]),
@@ -298,8 +305,8 @@ test("registers the exact V2 provider and model transport shape", () => {
   assert.deepEqual(catalog.providers.get("9router"), {
     id: "9router",
     name: "9Router",
+    activation: "enabled",
     package: PROVIDER_PACKAGE,
-    disabled: false,
     settings: {
       apiKey: "secret-key",
       baseURL: "http://10.0.0.1:20128/v1",
@@ -308,8 +315,10 @@ test("registers the exact V2 provider and model transport shape", () => {
   assert.deepEqual(catalog.models.get(id), {
     id,
     modelID: id,
+    providerID: "9router",
     name: "Muse Spark 1.3 Contributor (ocg)",
-    package: "aisdk:@ai-sdk/openai",
+    package: "@opencode/ai/providers/openai",
+    capabilities: { tools: true, input: ["text", "image"], output: ["text"] },
     enabled: true,
     status: "active",
     variants: [
@@ -319,6 +328,8 @@ test("registers the exact V2 provider and model transport shape", () => {
       { id: "high", settings: { reasoningEffort: "high" } },
       { id: "xhigh", settings: { reasoningEffort: "xhigh" } },
     ],
+    time: { released: 0 },
+    cost: [],
     limit: { context: 1_000_000, output: 131_072 },
   });
 });
@@ -344,8 +355,8 @@ test("preserves existing provider settings and registers models without limits",
   assert.deepEqual(catalog.providers.get("9router"), {
     id: "9router",
     name: "9Router",
+    activation: "enabled",
     package: PROVIDER_PACKAGE,
-    disabled: false,
     settings: {
       keep: "yes",
       apiKey: "k",
@@ -355,36 +366,35 @@ test("preserves existing provider settings and registers models without limits",
   assert.deepEqual(catalog.models.get("a/b"), {
     id: "a/b",
     modelID: "a/b",
+    providerID: "9router",
     name: "B (a)",
     package: PROVIDER_PACKAGE,
+    capabilities: { tools: true, input: ["text", "image"], output: ["text"] },
     enabled: true,
     status: "active",
     variants: [],
-    limit: { context: 0, output: 0 },
+    time: { released: 0 },
+    cost: [],
+    limit: { context: DEFAULT_CONTEXT_LIMIT, output: DEFAULT_OUTPUT_LIMIT },
   });
   assert.deepEqual(catalog.models.get("plain"), {
     id: "plain",
     modelID: "plain",
+    providerID: "9router",
     name: "Plain",
     package: PROVIDER_PACKAGE,
+    capabilities: { tools: true, input: ["text", "image"], output: ["text"] },
     enabled: true,
     status: "active",
     variants: [],
-    limit: { context: 0, output: 0 },
+    time: { released: 0 },
+    cost: [],
+    limit: { context: DEFAULT_CONTEXT_LIMIT, output: DEFAULT_OUTPUT_LIMIT },
   });
 });
 
-test("registers limits when the draft model has no limit object", () => {
+test("writes discovered limits into the staged model info", () => {
   const catalog = createCatalog();
-  catalog.draft.model.update = ((
-    _providerID: string,
-    id: string,
-    update: (model: MutableRecord) => void,
-  ) => {
-    const model = catalog.models.get(id) ?? { id, modelID: id };
-    catalog.models.set(id, model);
-    update(model);
-  }) as typeof catalog.draft.model.update;
 
   register9RouterCatalog(
     catalog.draft,
@@ -403,7 +413,7 @@ test("copies a partial limit without touching the other default", () => {
     [{ id: "c/model", reasoning: false, thinkingCanDisable: false, contextLimit: 123 }],
   );
 
-  assert.deepEqual(catalog.models.get("c/model")?.limit, { context: 123, output: 0 });
+  assert.deepEqual(catalog.models.get("c/model")?.limit, { context: 123, output: DEFAULT_OUTPUT_LIMIT });
 });
 
 test("copies an output-only limit without touching the context default", () => {
@@ -414,18 +424,18 @@ test("copies an output-only limit without touching the context default", () => {
     [{ id: "c/model", reasoning: false, thinkingCanDisable: false, outputLimit: 456 }],
   );
 
-  assert.deepEqual(catalog.models.get("c/model")?.limit, { context: 0, output: 456 });
+  assert.deepEqual(catalog.models.get("c/model")?.limit, { context: DEFAULT_CONTEXT_LIMIT, output: 456 });
   assert.deepEqual(outcome, { registered: 1, skipped: 0 });
 });
 
 test("mirrors the direct model package for Muse Spark", () => {
   const catalog = withDirectEntry({
     directID: "muse-spark-1.3-contributor",
-    modelPackage: "aisdk:@ai-sdk/openai",
-    providerPackage: "aisdk:@ai-sdk/openai-compatible",
+    modelPackage: "@opencode/ai/providers/openai",
+    providerPackage: "@opencode/ai/providers/openai-compatible",
   });
 
-  assert.equal(directModelPackage(catalog.draft, "ocg/muse-spark-1.3-contributor"), "aisdk:@ai-sdk/openai");
+  assert.equal(directModelPackage(catalog.draft, "ocg/muse-spark-1.3-contributor"), "@opencode/ai/providers/openai");
 
   register9RouterCatalog(
     catalog.draft,
@@ -433,16 +443,16 @@ test("mirrors the direct model package for Muse Spark", () => {
     [{ id: "ocg/muse-spark-1.3-contributor", reasoning: false, thinkingCanDisable: false }],
   );
 
-  assert.equal(catalog.models.get("ocg/muse-spark-1.3-contributor")?.package, "aisdk:@ai-sdk/openai");
+  assert.equal(catalog.models.get("ocg/muse-spark-1.3-contributor")?.package, "@opencode/ai/providers/openai");
 });
 
 test("mirrors an Anthropic-native direct model package", () => {
   const catalog = withDirectEntry({
     directID: "claude-sonnet-4-5",
-    modelPackage: "aisdk:@ai-sdk/anthropic",
+    modelPackage: "@opencode/ai/providers/anthropic",
   });
 
-  assert.equal(directModelPackage(catalog.draft, "ocg/claude-sonnet-4-5"), "aisdk:@ai-sdk/anthropic");
+  assert.equal(directModelPackage(catalog.draft, "ocg/claude-sonnet-4-5"), "@opencode/ai/providers/anthropic");
 
   register9RouterCatalog(
     catalog.draft,
@@ -450,18 +460,18 @@ test("mirrors an Anthropic-native direct model package", () => {
     [{ id: "ocg/claude-sonnet-4-5", reasoning: false, thinkingCanDisable: false }],
   );
 
-  assert.equal(catalog.models.get("ocg/claude-sonnet-4-5")?.package, "aisdk:@ai-sdk/anthropic");
+  assert.equal(catalog.models.get("ocg/claude-sonnet-4-5")?.package, "@opencode/ai/providers/anthropic");
 });
 
 test("keeps an OpenAI-compatible direct model on the compatible transport", () => {
   const catalog = withDirectEntry({
     directID: "gpt-5-mini",
-    modelPackage: "aisdk:@ai-sdk/openai-compatible",
+    modelPackage: "@opencode/ai/providers/openai-compatible",
   });
 
   assert.equal(
     directModelPackage(catalog.draft, "ocg/gpt-5-mini"),
-    "aisdk:@ai-sdk/openai-compatible",
+    "@opencode/ai/providers/openai-compatible",
   );
 
   register9RouterCatalog(
@@ -490,50 +500,50 @@ test("falls back to the generic compatible package for unknown models", () => {
 test("prefers the model package over its provider package and falls back to the provider", () => {
   const preferred = withDirectEntry({
     directID: "m",
-    modelPackage: "aisdk:@ai-sdk/openai",
-    providerPackage: "aisdk:@ai-sdk/anthropic",
+    modelPackage: "@opencode/ai/providers/openai",
+    providerPackage: "@opencode/ai/providers/anthropic",
   });
-  assert.equal(directModelPackage(preferred.draft, "ocg/m"), "aisdk:@ai-sdk/openai");
+  assert.equal(directModelPackage(preferred.draft, "ocg/m"), "@opencode/ai/providers/openai");
 
   const providerFallback = withDirectEntry({
     directID: "m",
-    providerPackage: "aisdk:@ai-sdk/anthropic",
+    providerPackage: "@opencode/ai/providers/anthropic",
   });
-  assert.equal(directModelPackage(providerFallback.draft, "ocg/m"), "aisdk:@ai-sdk/anthropic");
+  assert.equal(directModelPackage(providerFallback.draft, "ocg/m"), "@opencode/ai/providers/anthropic");
 });
 
 test("ignores 9router records when mirroring the transport package", () => {
   const catalog = createCatalog();
-  catalog.draft.provider.list = () => [
+  catalog.draft.list = () => [
     {
-      provider: { id: "9router", package: "aisdk:@ai-sdk/openai-compatible" },
-      models: new Map([["m", { id: "m", package: "aisdk:@ai-sdk/openai", variants: [] }]]),
+      provider: { id: "9router", package: "@opencode/ai/providers/openai-compatible" },
+      models: new Map([["m", { id: "m", package: "@opencode/ai/providers/openai", variants: [] }]]),
     },
     {
-      provider: { id: "opencode", package: "aisdk:@ai-sdk/anthropic" },
-      models: new Map([["m", { id: "m", package: "aisdk:@ai-sdk/anthropic", variants: [] }]]),
+      provider: { id: "opencode", package: "@opencode/ai/providers/anthropic" },
+      models: new Map([["m", { id: "m", package: "@opencode/ai/providers/anthropic", variants: [] }]]),
     },
   ] as never;
 
-  assert.equal(directModelPackage(catalog.draft, "ocg/m"), "aisdk:@ai-sdk/anthropic");
+  assert.equal(directModelPackage(catalog.draft, "ocg/m"), "@opencode/ai/providers/anthropic");
 });
 
 test("mirrors transport through the -review direct ID mapping", () => {
   const catalog = withDirectEntry({
     directID: "foo",
-    modelPackage: "aisdk:@ai-sdk/openai",
+    modelPackage: "@opencode/ai/providers/openai",
   });
 
-  assert.equal(directModelPackage(catalog.draft, "ocg/foo-review"), "aisdk:@ai-sdk/openai");
+  assert.equal(directModelPackage(catalog.draft, "ocg/foo-review"), "@opencode/ai/providers/openai");
 });
 
 test("mirrored transport keeps the 9router baseURL and apiKey", () => {
   const catalog = withDirectEntry({
     directID: "muse-spark-1.3-contributor",
-    modelPackage: "aisdk:@ai-sdk/openai",
+    modelPackage: "@opencode/ai/providers/openai",
   });
   // Simulate a direct record that also carries upstream connection settings.
-  const record = (catalog.draft.provider.list() as unknown as Array<Record<string, unknown>>)[0];
+  const record = (catalog.draft.list() as unknown as Array<Record<string, unknown>>)[0];
   const models = record?.["models"] as Map<string, Record<string, unknown>>;
   const direct = models.get("muse-spark-1.3-contributor");
   if (direct) {
@@ -551,7 +561,7 @@ test("mirrored transport keeps the 9router baseURL and apiKey", () => {
     baseURL: "http://10.0.0.1:20128/v1",
   });
   const registered = catalog.models.get("ocg/muse-spark-1.3-contributor");
-  assert.equal(registered?.package, "aisdk:@ai-sdk/openai");
+  assert.equal(registered?.package, "@opencode/ai/providers/openai");
   assert.equal(registered?.modelID, "ocg/muse-spark-1.3-contributor");
   assert.deepEqual((registered as { settings?: unknown } | undefined)?.settings, undefined);
 });
@@ -559,11 +569,11 @@ test("mirrored transport keeps the 9router baseURL and apiKey", () => {
 test("registration does not mutate the direct model", () => {
   const catalog = withDirectEntry({
     directID: "muse-spark-1.3-contributor",
-    modelPackage: "aisdk:@ai-sdk/openai",
-    providerPackage: "aisdk:@ai-sdk/openai",
+    modelPackage: "@opencode/ai/providers/openai",
+    providerPackage: "@opencode/ai/providers/openai",
     efforts: ["low", "medium"],
   });
-  const before = JSON.stringify(catalog.draft.provider.list());
+  const before = JSON.stringify(catalog.draft.list());
 
   register9RouterCatalog(
     catalog.draft,
@@ -577,7 +587,7 @@ test("registration does not mutate the direct model", () => {
     }],
   );
 
-  assert.equal(JSON.stringify(catalog.draft.provider.list()), before);
+  assert.equal(JSON.stringify(catalog.draft.list()), before);
   // Reasoning mirroring still works alongside transport mirroring.
   assert.deepEqual(
     (catalog.models.get("ocg/muse-spark-1.3-contributor")?.variants as Array<{ id: string }>)
@@ -589,15 +599,15 @@ test("registration does not mutate the direct model", () => {
 test("reports which provider and direct model supply the mirrored transport", () => {
   const catalog = withDirectEntry({
     directID: "muse-spark-1.3-contributor",
-    modelPackage: "aisdk:@ai-sdk/openai",
-    providerPackage: "aisdk:@ai-sdk/openai-compatible",
+    modelPackage: "@opencode/ai/providers/openai",
+    providerPackage: "@opencode/ai/providers/openai-compatible",
     providerID: "opencode",
   });
 
   assert.deepEqual(directTransport(catalog.draft, "ocg/muse-spark-1.3-contributor"), {
     providerID: "opencode",
     modelID: "muse-spark-1.3-contributor",
-    package: "aisdk:@ai-sdk/openai",
+    package: "@opencode/ai/providers/openai",
   });
   assert.equal(
     directTransport(createCatalog().draft, "ocg/muse-spark-1.3-contributor"),
@@ -613,17 +623,17 @@ test("reports which provider and direct model supply the mirrored transport", ()
 test("resolves order-independently across duplicate candidates", () => {
   const reversed = () => {
     const catalog = createCatalog();
-    catalog.draft.provider.list = () => [
+    catalog.draft.list = () => [
       {
-        provider: { id: "b-second", package: "aisdk:@ai-sdk/anthropic" },
+        provider: { id: "b-second", package: "@opencode/ai/providers/anthropic" },
         models: new Map([
-          ["m", { id: "m", package: "aisdk:@ai-sdk/anthropic", variants: [] }],
+          ["m", { id: "m", package: "@opencode/ai/providers/anthropic", variants: [] }],
         ]),
       },
       {
-        provider: { id: "a-first", package: "aisdk:@ai-sdk/openai" },
+        provider: { id: "a-first", package: "@opencode/ai/providers/openai" },
         models: new Map([
-          ["m", { id: "m", package: "aisdk:@ai-sdk/openai", variants: [] }],
+          ["m", { id: "m", package: "@opencode/ai/providers/openai", variants: [] }],
         ]),
       },
     ] as never;
@@ -643,21 +653,21 @@ test("treats identical duplicate packages as equivalent regardless of order", ()
   for (const order of ["ab", "ba"] as const) {
     const catalog = createCatalog();
     const a = {
-      provider: { id: "a-first", package: "aisdk:@ai-sdk/openai" },
+      provider: { id: "a-first", package: "@opencode/ai/providers/openai" },
       models: new Map([
-        ["m", { id: "m", package: "aisdk:@ai-sdk/openai", variants: [{ id: "low", settings: { reasoningEffort: "low" } }] }],
+        ["m", { id: "m", package: "@opencode/ai/providers/openai", variants: [{ id: "low", settings: { reasoningEffort: "low" } }] }],
       ]),
     };
     const b = {
-      provider: { id: "b-second", package: "aisdk:@ai-sdk/openai" },
+      provider: { id: "b-second", package: "@opencode/ai/providers/openai" },
       models: new Map([
-        ["m", { id: "m", package: "aisdk:@ai-sdk/openai", variants: [{ id: "high", settings: { reasoningEffort: "high" } }] }],
+        ["m", { id: "m", package: "@opencode/ai/providers/openai", variants: [{ id: "high", settings: { reasoningEffort: "high" } }] }],
       ]),
     };
-    catalog.draft.provider.list = () => (order === "ab" ? [a, b] : [b, a]) as never;
+    catalog.draft.list = () => (order === "ab" ? [a, b] : [b, a]) as never;
 
     const resolved = resolveDirectModel(catalog.draft, "zz/m");
-    assert.equal(resolved.package, "aisdk:@ai-sdk/openai");
+    assert.equal(resolved.package, "@opencode/ai/providers/openai");
     assert.equal(resolved.packageSource, "model");
     assert.equal(resolved.candidateCount, 2);
     // Deterministic by provider ID, independent of list() order.
@@ -667,23 +677,23 @@ test("treats identical duplicate packages as equivalent regardless of order", ()
 
 test("uses route/provider affinity to resolve conflicting packages", () => {
   const catalog = createCatalog();
-  catalog.draft.provider.list = () => [
+  catalog.draft.list = () => [
     {
-      provider: { id: "other", package: "aisdk:@ai-sdk/anthropic" },
+      provider: { id: "other", package: "@opencode/ai/providers/anthropic" },
       models: new Map([
-        ["m", { id: "m", package: "aisdk:@ai-sdk/anthropic", variants: [] }],
+        ["m", { id: "m", package: "@opencode/ai/providers/anthropic", variants: [] }],
       ]),
     },
     {
-      provider: { id: "acme", package: "aisdk:@ai-sdk/openai" },
+      provider: { id: "acme", package: "@opencode/ai/providers/openai" },
       models: new Map([
-        ["m", { id: "m", package: "aisdk:@ai-sdk/openai", variants: [] }],
+        ["m", { id: "m", package: "@opencode/ai/providers/openai", variants: [] }],
       ]),
     },
   ] as never;
 
   const resolved = resolveDirectModel(catalog.draft, "acme/m");
-  assert.equal(resolved.package, "aisdk:@ai-sdk/openai");
+  assert.equal(resolved.package, "@opencode/ai/providers/openai");
   assert.equal(resolved.packageSource, "model");
   assert.equal(resolved.candidate?.providerID, "acme");
 
@@ -700,7 +710,7 @@ test("uses route/provider affinity to resolve conflicting packages", () => {
 
 test("keeps package and reasoning metadata on the same selected candidate", () => {
   const catalog = createCatalog();
-  catalog.draft.provider.list = () => [
+  catalog.draft.list = () => [
     {
       provider: { id: "b-transport" },
       models: new Map([
@@ -708,7 +718,7 @@ test("keeps package and reasoning metadata on the same selected candidate", () =
           "m",
           {
             id: "m",
-            package: "aisdk:@ai-sdk/anthropic",
+            package: "@opencode/ai/providers/anthropic",
             variants: [{ id: "low", settings: { reasoningEffort: "low" } }],
           },
         ],
@@ -730,7 +740,7 @@ test("keeps package and reasoning metadata on the same selected candidate", () =
 
   const resolved = resolveDirectModel(catalog.draft, "zz/m");
   assert.equal(resolved.candidate?.providerID, "b-transport");
-  assert.equal(resolved.package, "aisdk:@ai-sdk/anthropic");
+  assert.equal(resolved.package, "@opencode/ai/providers/anthropic");
 
   const variants = reasoningVariants(catalog.draft, {
     id: "zz/m",
@@ -745,7 +755,7 @@ test("keeps package and reasoning metadata on the same selected candidate", () =
     [{ id: "zz/m", reasoning: true, thinkingCanDisable: false }],
   );
   const registered = catalog.models.get("zz/m");
-  assert.equal(registered?.package, "aisdk:@ai-sdk/anthropic");
+  assert.equal(registered?.package, "@opencode/ai/providers/anthropic");
   assert.deepEqual(
     (registered?.variants as Array<{ id: string }>).map((variant) => variant.id),
     ["low"],
@@ -755,12 +765,12 @@ test("keeps package and reasoning metadata on the same selected candidate", () =
 test("skips malformed records and unsafe variant shapes", () => {
   const catalog = createCatalog();
   const good = {
-    provider: { id: "good", package: "aisdk:@ai-sdk/openai" },
+    provider: { id: "good", package: "@opencode/ai/providers/openai" },
     models: new Map([
-      ["m", { id: "m", package: "aisdk:@ai-sdk/openai", variants: [] }],
+      ["m", { id: "m", package: "@opencode/ai/providers/openai", variants: [] }],
     ]),
   };
-  catalog.draft.provider.list = () => [
+  catalog.draft.list = () => [
     null,
     "record",
     { provider: { id: "9router" }, models: new Map() },
@@ -776,7 +786,7 @@ test("skips malformed records and unsafe variant shapes", () => {
     },
     {
       provider: { id: "array-variants" },
-      models: new Map([["m", { id: "m", package: "aisdk:@ai-sdk/openai", variants: [null, { id: "x" }, { id: "low" }] }]]),
+      models: new Map([["m", { id: "m", package: "@opencode/ai/providers/openai", variants: [null, { id: "x" }, { id: "low" }] }]]),
     },
     {
       provider: { id: "primitive-variants" },
@@ -797,12 +807,12 @@ test("skips malformed records and unsafe variant shapes", () => {
       }]]),
     },
     { provider: { id: "no-models" } },
-    { provider: { id: "no-get", package: "aisdk:@ai-sdk/anthropic" }, models: {} },
+    { provider: { id: "no-get", package: "@opencode/ai/providers/anthropic" }, models: {} },
     good,
   ] as never;
 
   assert.deepEqual(directReasoningEfforts(catalog.draft, "zz/m"), []);
-  assert.equal(directModelPackage(catalog.draft, "zz/m"), "aisdk:@ai-sdk/openai");
+  assert.equal(directModelPackage(catalog.draft, "zz/m"), "@opencode/ai/providers/openai");
   const resolved = resolveDirectModel(catalog.draft, "zz/m");
   assert.equal(resolved.candidateCount, 8);
   assert.equal(resolved.candidate?.providerID, "array-variants");
@@ -810,7 +820,7 @@ test("skips malformed records and unsafe variant shapes", () => {
 
 test("a throwing provider.list never breaks resolution", () => {
   const catalog = createCatalog();
-  catalog.draft.provider.list = () => {
+  catalog.draft.list = () => {
     throw new Error("catalog changed");
   };
   const resolved = resolveDirectModel(catalog.draft, "zz/m");
@@ -821,7 +831,7 @@ test("a throwing provider.list never breaks resolution", () => {
 
 test("packageless duplicates fall back with one warning", () => {
   const catalog = createCatalog();
-  catalog.draft.provider.list = () => [
+  catalog.draft.list = () => [
     {
       provider: { id: "b" },
       models: new Map([["m", { id: "m", variants: [] }]]),
@@ -847,7 +857,7 @@ test("packageless duplicates fall back with one warning", () => {
 
 test("packageless affinity resolves through the route prefix", () => {
   const catalog = createCatalog();
-  catalog.draft.provider.list = () => [
+  catalog.draft.list = () => [
     {
       provider: { id: "other" },
       models: new Map([["m", { id: "m", variants: [] }]]),
@@ -869,14 +879,14 @@ test("packageless affinity resolves through the route prefix", () => {
 
 test("a throwing warn sink cannot break ambiguity fallback", () => {
   const catalog = createCatalog();
-  catalog.draft.provider.list = () => [
+  catalog.draft.list = () => [
     {
       provider: { id: "b" },
-      models: new Map([["m", { id: "m", package: "aisdk:@ai-sdk/anthropic", variants: [] }]]),
+      models: new Map([["m", { id: "m", package: "@opencode/ai/providers/anthropic", variants: [] }]]),
     },
     {
       provider: { id: "a" },
-      models: new Map([["m", { id: "m", package: "aisdk:@ai-sdk/openai", variants: [] }]]),
+      models: new Map([["m", { id: "m", package: "@opencode/ai/providers/openai", variants: [] }]]),
     },
   ] as never;
 
@@ -898,20 +908,20 @@ test("records with throwing getters are skipped", () => {
     models: new Map(),
   };
   const good = {
-    provider: { id: "good", package: "aisdk:@ai-sdk/openai" },
-    models: new Map([["m", { id: "m", package: "aisdk:@ai-sdk/openai", variants: [] }]]),
+    provider: { id: "good", package: "@opencode/ai/providers/openai" },
+    models: new Map([["m", { id: "m", package: "@opencode/ai/providers/openai", variants: [] }]]),
   };
-  catalog.draft.provider.list = () => [boom, good] as never;
+  catalog.draft.list = () => [boom, good] as never;
 
   const resolved = resolveDirectModel(catalog.draft, "zz/m");
-  assert.equal(resolved.package, "aisdk:@ai-sdk/openai");
+  assert.equal(resolved.package, "@opencode/ai/providers/openai");
   assert.equal(resolved.candidate?.providerID, "good");
   assert.equal(resolved.candidateCount, 1);
 });
 
 test("a single packageless candidate resolves through the fallback source", () => {
   const catalog = createCatalog();
-  catalog.draft.provider.list = () => [
+  catalog.draft.list = () => [
     {
       provider: { id: "solo" },
       models: new Map([
@@ -931,7 +941,7 @@ test("a single packageless candidate resolves through the fallback source", () =
 
 test("a non-array provider list resolves to the fallback", () => {
   const catalog = createCatalog();
-  catalog.draft.provider.list = () => ({ length: 0 }) as never;
+  catalog.draft.list = () => ({ length: 0 }) as never;
 
   const resolved = resolveDirectModel(catalog.draft, "zz/m");
   assert.equal(resolved.package, PROVIDER_PACKAGE);
@@ -943,14 +953,14 @@ test("a non-array provider list resolves to the fallback", () => {
 test("conflicting packages under the same route prefix stay ambiguous", () => {
   const catalog = createCatalog();
   const warnings: string[] = [];
-  catalog.draft.provider.list = () => [
+  catalog.draft.list = () => [
     {
-      provider: { id: "acme", package: "aisdk:@ai-sdk/openai" },
-      models: new Map([["m", { id: "m", package: "aisdk:@ai-sdk/openai", variants: [] }]]),
+      provider: { id: "acme", package: "@opencode/ai/providers/openai" },
+      models: new Map([["m", { id: "m", package: "@opencode/ai/providers/openai", variants: [] }]]),
     },
     {
-      provider: { id: "acme", package: "aisdk:@ai-sdk/anthropic" },
-      models: new Map([["m", { id: "m", package: "aisdk:@ai-sdk/anthropic", variants: [] }]]),
+      provider: { id: "acme", package: "@opencode/ai/providers/anthropic" },
+      models: new Map([["m", { id: "m", package: "@opencode/ai/providers/anthropic", variants: [] }]]),
     },
   ] as never;
 
@@ -966,7 +976,7 @@ test("conflicting packages under the same route prefix stay ambiguous", () => {
 
 test("a prefix-less route skips affinity and resolves deterministically", () => {
   const catalog = createCatalog();
-  catalog.draft.provider.list = () => [
+  catalog.draft.list = () => [
     {
       provider: { id: "b" },
       models: new Map([
@@ -988,25 +998,15 @@ test("a prefix-less route skips affinity and resolves deterministically", () => 
   assert.equal(resolved.candidateCount, 2);
 });
 
-test("registration isolates a failing model update and reports the skip", () => {
+test("a failing inventory write skips every staged model and reports the skip", () => {
   const catalog = createCatalog();
   const warnings: string[] = [];
-  const seen: string[] = [];
-  const failing: Record<string, MutableRecord> = {};
-  catalog.draft.model.update = ((
-    _providerID: string,
-    id: string,
-    update: (model: MutableRecord) => void,
-  ) => {
-    if (id === "bad/model") throw new Error("draft shape changed");
-    const model = { id, modelID: id, limit: {} };
-    failing[id] = model;
-    update(model);
-    seen.push(id);
-  }) as typeof catalog.draft.model.update;
+  catalog.draft.models.set = () => {
+    throw new Error("inventory changed");
+  };
 
   const infos: string[] = [];
-  register9RouterCatalog(
+  const outcome = register9RouterCatalog(
     catalog.draft,
     { apiKey: "k", baseURL: "http://10.0.0.1:20128/v1" },
     [
@@ -1019,12 +1019,12 @@ test("registration isolates a failing model update and reports the skip", () => 
     },
   );
 
-  assert.deepEqual(seen, ["good/model"]);
+  assert.deepEqual(outcome, { registered: 0, skipped: 2 });
   assert.deepEqual(infos, [
     `bad/model:${PROVIDER_PACKAGE}`,
     `good/model:${PROVIDER_PACKAGE}`,
   ]);
-  assert.deepEqual(warnings, ["opencode-9router-v2: skipped 1 model(s) that failed to register"]);
+  assert.deepEqual(warnings, ["opencode-9router-v2: skipped 2 model(s) that failed to register"]);
 });
 
 test("a throwing onResolved or warn sink cannot break registration", () => {
@@ -1048,53 +1048,53 @@ test("a throwing onResolved or warn sink cannot break registration", () => {
 
 test("resolves nested routes through the first segment or full prefix", () => {
   const byFirstSegment = createCatalog();
-  byFirstSegment.draft.provider.list = () => [
+  byFirstSegment.draft.list = () => [
     {
-      provider: { id: "other", package: "aisdk:@ai-sdk/anthropic" },
+      provider: { id: "other", package: "@opencode/ai/providers/anthropic" },
       models: new Map([
-        ["c", { id: "c", package: "aisdk:@ai-sdk/anthropic", variants: [] }],
+        ["c", { id: "c", package: "@opencode/ai/providers/anthropic", variants: [] }],
       ]),
     },
     {
-      provider: { id: "a", package: "aisdk:@ai-sdk/openai" },
-      models: new Map([["c", { id: "c", package: "aisdk:@ai-sdk/openai", variants: [] }]]),
+      provider: { id: "a", package: "@opencode/ai/providers/openai" },
+      models: new Map([["c", { id: "c", package: "@opencode/ai/providers/openai", variants: [] }]]),
     },
   ] as never;
 
   const first = resolveDirectModel(byFirstSegment.draft, "a/b/c");
-  assert.equal(first.package, "aisdk:@ai-sdk/openai");
+  assert.equal(first.package, "@opencode/ai/providers/openai");
   assert.equal(first.packageSource, "model");
   assert.equal(first.candidate?.providerID, "a");
 
   const byFullPrefix = createCatalog();
-  byFullPrefix.draft.provider.list = () => [
+  byFullPrefix.draft.list = () => [
     {
-      provider: { id: "other", package: "aisdk:@ai-sdk/anthropic" },
+      provider: { id: "other", package: "@opencode/ai/providers/anthropic" },
       models: new Map([
-        ["c", { id: "c", package: "aisdk:@ai-sdk/anthropic", variants: [] }],
+        ["c", { id: "c", package: "@opencode/ai/providers/anthropic", variants: [] }],
       ]),
     },
     {
-      provider: { id: "a/b", package: "aisdk:@ai-sdk/openai" },
-      models: new Map([["c", { id: "c", package: "aisdk:@ai-sdk/openai", variants: [] }]]),
+      provider: { id: "a/b", package: "@opencode/ai/providers/openai" },
+      models: new Map([["c", { id: "c", package: "@opencode/ai/providers/openai", variants: [] }]]),
     },
   ] as never;
 
   const full = resolveDirectModel(byFullPrefix.draft, "a/b/c");
-  assert.equal(full.package, "aisdk:@ai-sdk/openai");
+  assert.equal(full.package, "@opencode/ai/providers/openai");
   assert.equal(full.candidate?.providerID, "a/b");
 });
 
 test("warns once per ambiguous route within a registration pass", () => {
   const catalog = createCatalog();
-  catalog.draft.provider.list = () => [
+  catalog.draft.list = () => [
     {
       provider: { id: "b" },
-      models: new Map([["m", { id: "m", package: "aisdk:@ai-sdk/anthropic", variants: [] }]]),
+      models: new Map([["m", { id: "m", package: "@opencode/ai/providers/anthropic", variants: [] }]]),
     },
     {
       provider: { id: "a" },
-      models: new Map([["m", { id: "m", package: "aisdk:@ai-sdk/openai", variants: [] }]]),
+      models: new Map([["m", { id: "m", package: "@opencode/ai/providers/openai", variants: [] }]]),
     },
   ] as never;
 
@@ -1125,19 +1125,19 @@ test("warns once per ambiguous route within a registration pass", () => {
 
 test("skips provider records with a case-variant 9router ID", () => {
   const catalog = createCatalog();
-  catalog.draft.provider.list = () => [
+  catalog.draft.list = () => [
     {
-      provider: { id: "9Router", package: "aisdk:@ai-sdk/anthropic" },
-      models: new Map([["m", { id: "m", package: "aisdk:@ai-sdk/anthropic", variants: [] }]]),
+      provider: { id: "9Router", package: "@opencode/ai/providers/anthropic" },
+      models: new Map([["m", { id: "m", package: "@opencode/ai/providers/anthropic", variants: [] }]]),
     },
     {
-      provider: { id: "good", package: "aisdk:@ai-sdk/openai" },
-      models: new Map([["m", { id: "m", package: "aisdk:@ai-sdk/openai", variants: [] }]]),
+      provider: { id: "good", package: "@opencode/ai/providers/openai" },
+      models: new Map([["m", { id: "m", package: "@opencode/ai/providers/openai", variants: [] }]]),
     },
   ] as never;
 
   const resolved = resolveDirectModel(catalog.draft, "zz/m");
-  assert.equal(resolved.package, "aisdk:@ai-sdk/openai");
+  assert.equal(resolved.package, "@opencode/ai/providers/openai");
   assert.equal(resolved.candidate?.providerID, "good");
   assert.equal(resolved.candidateCount, 1);
 });

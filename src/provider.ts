@@ -1,10 +1,13 @@
-import type { Plugin } from "@opencode-ai/plugin";
+import type { Model, Plugin, Provider } from "@opencode/plugin";
 import type { RouterConfig } from "./config.js";
 import type { DiscoveredModel } from "./discovery.js";
 
 export const PROVIDER_ID = "9router";
 export const PROVIDER_NAME = "9Router";
-export const PROVIDER_PACKAGE = "aisdk:@ai-sdk/openai-compatible";
+export const PROVIDER_PACKAGE = "@opencode/ai/providers/openai-compatible";
+
+export const DEFAULT_CONTEXT_LIMIT = 200_000;
+export const DEFAULT_OUTPUT_LIMIT = 32_000;
 
 /** Route used for temporary transport observability. Contains no credentials. */
 export const MUSE_DEBUG_ROUTE = "ocg/muse-spark-1.3-contributor";
@@ -13,9 +16,14 @@ const REASONING_EFFORTS = ["none", "minimal", "low", "medium", "high", "xhigh", 
 type ReasoningEffort = (typeof REASONING_EFFORTS)[number];
 const FALLBACK_REASONING_EFFORTS = ["low", "medium", "high", "xhigh"] as const;
 
-export type CatalogDraft = Parameters<
-  Parameters<Plugin.Context["catalog"]["transform"]>[0]
+export type ProviderEditor = Parameters<
+  Parameters<Plugin.Context["provider"]["transform"]>[0]
 >[0];
+
+/** Pre-2.0 alias for the provider transform editor. */
+export type CatalogDraft = ProviderEditor;
+
+export type ProviderListable = Pick<ProviderEditor, "list">;
 
 export const displayName = (modelID: string): string => {
   const separator = modelID.lastIndexOf("/");
@@ -130,12 +138,12 @@ const candidateEfforts = (direct: { variants?: unknown }): ReasoningEffort[] => 
   return [...seen];
 };
 
-const collectCandidates = (catalog: CatalogDraft, modelID: string): DirectCandidate[] => {
+const collectCandidates = (editor: ProviderListable, modelID: string): DirectCandidate[] => {
   const candidates: DirectCandidate[] = [];
 
   let records: readonly unknown[];
   try {
-    records = catalog.provider.list() as unknown as readonly unknown[];
+    records = editor.list() as unknown as readonly unknown[];
   } catch {
     return candidates;
   }
@@ -262,12 +270,12 @@ const resolvePackageless = (
  * provider `acme`, or nested `a/b/c` matching provider `a` or `a/b`).
  */
 export const resolveDirectModel = (
-  catalog: CatalogDraft,
+  editor: ProviderListable,
   routeID: string,
   options: ResolveOptions = {},
 ): ResolvedDirectModel => {
   const modelID = directModelID(routeID);
-  const candidates = collectCandidates(catalog, modelID);
+  const candidates = collectCandidates(editor, modelID);
 
   const withModelPackage = candidates.filter(
     (candidate) => candidate.modelPackage !== undefined,
@@ -317,10 +325,10 @@ export const resolveDirectModel = (
 };
 
 export const directTransport = (
-  catalog: CatalogDraft,
+  editor: ProviderListable,
   routeID: string,
 ): DirectTransport | undefined => {
-  const resolved = resolveDirectModel(catalog, routeID);
+  const resolved = resolveDirectModel(editor, routeID);
   if (resolved.candidate === undefined || resolved.packageSource === "fallback") return undefined;
   return {
     providerID: resolved.candidate.providerID,
@@ -329,13 +337,13 @@ export const directTransport = (
   };
 };
 
-export const directModelPackage = (catalog: CatalogDraft, routeID: string): string =>
-  directTransport(catalog, routeID)?.package ?? PROVIDER_PACKAGE;
+export const directModelPackage = (editor: ProviderListable, routeID: string): string =>
+  directTransport(editor, routeID)?.package ?? PROVIDER_PACKAGE;
 
 export const directReasoningEfforts = (
-  catalog: CatalogDraft,
+  editor: ProviderListable,
   routeID: string,
-): ReasoningEffort[] => [...(resolveDirectModel(catalog, routeID).candidate?.efforts ?? [])];
+): ReasoningEffort[] => [...(resolveDirectModel(editor, routeID).candidate?.efforts ?? [])];
 
 const selectEfforts = (
   candidateEfforts: readonly ReasoningEffort[],
@@ -351,11 +359,11 @@ const selectEfforts = (
 };
 
 export const reasoningVariants = (
-  catalog: CatalogDraft,
+  editor: ProviderListable,
   model: Pick<DiscoveredModel, "id" | "reasoning" | "thinkingCanDisable">,
 ): Array<{ id: string; settings: { reasoningEffort: string } }> => {
   const efforts = selectEfforts(
-    resolveDirectModel(catalog, model.id).candidate?.efforts ?? [],
+    resolveDirectModel(editor, model.id).candidate?.efforts ?? [],
     model,
   );
   return efforts.map((effort) => ({ id: effort, settings: { reasoningEffort: effort } }));
@@ -373,34 +381,69 @@ type PreparedModel = {
   readonly name: string;
   readonly transport: string;
   readonly variants: readonly { id: string; settings: { reasoningEffort: string } }[];
-  readonly limit?: { readonly context?: number; readonly output?: number };
+  readonly contextLimit?: number;
+  readonly outputLimit?: number;
   readonly resolution: ResolutionInfo;
 };
 
+const toModelInfo = (prepared: PreparedModel): Model.Info =>
+  ({
+    id: prepared.route,
+    modelID: prepared.route,
+    providerID: PROVIDER_ID,
+    name: prepared.name,
+    package: prepared.transport,
+    capabilities: { tools: true, input: ["text", "image"], output: ["text"] },
+    variants: [...prepared.variants],
+    time: { released: 0 },
+    cost: [],
+    status: "active",
+    enabled: true,
+    limit: {
+      context: prepared.contextLimit ?? DEFAULT_CONTEXT_LIMIT,
+      output: prepared.outputLimit ?? DEFAULT_OUTPUT_LIMIT,
+    },
+  }) as unknown as Model.Info;
+
 export const register9RouterCatalog = (
-  catalog: CatalogDraft,
+  editor: ProviderEditor,
   config: RouterConfig,
   models: readonly DiscoveredModel[],
   options: RegisterOptions = {},
 ): RegisterResult => {
-  catalog.provider.update(PROVIDER_ID, (provider) => {
-    provider.name = PROVIDER_NAME;
-    provider.package = PROVIDER_PACKAGE;
-    provider.disabled = false;
-    provider.settings = {
-      ...provider.settings,
-      apiKey: config.apiKey,
-      baseURL: config.baseURL,
-    };
-  });
+  // Throws to the caller (fail-soft in setup) when the provider itself cannot
+  // be ensured, matching the previous catalog.provider.update behavior.
+  if (editor.get(PROVIDER_ID) === undefined) {
+    editor.add({
+      info: {
+        id: PROVIDER_ID,
+        name: PROVIDER_NAME,
+        activation: "enabled",
+        package: PROVIDER_PACKAGE,
+        settings: { apiKey: config.apiKey, baseURL: config.baseURL },
+      } as unknown as Provider.Info,
+      models: [],
+    });
+  } else {
+    editor.update(PROVIDER_ID, (provider) => {
+      provider.name = PROVIDER_NAME;
+      provider.package = PROVIDER_PACKAGE;
+      provider.activation = "enabled";
+      provider.settings = {
+        ...provider.settings,
+        apiKey: config.apiKey,
+        baseURL: config.baseURL,
+      };
+    });
+  }
 
   let registered = 0;
   let skipped = 0;
   const warnedRoutes = options.warnedRoutes ?? new Set<string>();
+  const infos: Model.Info[] = [];
   for (const discovered of models) {
-    // Resolve and validate everything before touching the draft, so the
-    // update callback below only performs prepared assignments and can never
-    // leave a half-mutated model behind.
+    // Resolve and validate everything before staging, so one bad entry can
+    // never poison the shared inventory write below.
     let prepared: PreparedModel;
     try {
       if (!discovered || typeof discovered.id !== "string") {
@@ -408,7 +451,7 @@ export const register9RouterCatalog = (
       }
       // One shared resolution drives both transport and reasoning variants so
       // they can never come from different providers.
-      const resolved = resolveDirectModel(catalog, discovered.id, {
+      const resolved = resolveDirectModel(editor, discovered.id, {
         warn: options.warn,
         warnedRoutes,
       });
@@ -420,17 +463,8 @@ export const register9RouterCatalog = (
         name: displayName(discovered.id),
         transport: resolved.package,
         variants,
-        limit:
-          discovered.contextLimit === undefined && discovered.outputLimit === undefined
-            ? undefined
-            : {
-                ...(discovered.contextLimit === undefined
-                  ? {}
-                  : { context: discovered.contextLimit }),
-                ...(discovered.outputLimit === undefined
-                  ? {}
-                  : { output: discovered.outputLimit }),
-              },
+        ...(discovered.contextLimit === undefined ? {} : { contextLimit: discovered.contextLimit }),
+        ...(discovered.outputLimit === undefined ? {} : { outputLimit: discovered.outputLimit }),
         resolution: {
           route: discovered.id,
           providerID: resolved.candidate?.providerID,
@@ -451,22 +485,15 @@ export const register9RouterCatalog = (
       // Resolution observability must never break registration.
     }
 
+    infos.push(toModelInfo(prepared));
+  }
+
+  if (infos.length > 0) {
     try {
-      const update = prepared;
-      catalog.model.update(PROVIDER_ID, update.route, (model) => {
-        model.name = update.name;
-        model.modelID = update.route as unknown as typeof model.modelID;
-        model.package = update.transport;
-        model.enabled = true;
-        model.status = "active";
-        model.variants = update.variants as unknown as typeof model.variants;
-        if (update.limit !== undefined) {
-          model.limit = { ...model.limit, ...update.limit } as typeof model.limit;
-        }
-      });
-      registered += 1;
+      editor.models.set(PROVIDER_ID, infos);
+      registered += infos.length;
     } catch {
-      skipped += 1;
+      skipped += infos.length;
     }
   }
 

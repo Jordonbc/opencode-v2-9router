@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Single-package TypeScript ESM OpenCode V2 plugin (`src/index.ts`). Strict TS, `NodeNext`, target ES2022, Node >=20. One runtime dep: pinned `@opencode-ai/plugin` beta — re-check SDK contract before upgrading it or `opencode2`.
+Single-package TypeScript ESM OpenCode V2 plugin (`src/index.ts`). Strict TS, `NodeNext`, target ES2022, Node >=20. One runtime dep: pinned `@opencode/plugin` — re-check SDK contract before upgrading it or `opencode`.
 
 ## Commands
 
@@ -14,10 +14,10 @@ Single-package TypeScript ESM OpenCode V2 plugin (`src/index.ts`). Strict TS, `N
 
 ## Architecture
 
-- `src/index.ts` — default export is `createPlugin()` V2 definition (`id: opencode.9router`). `setup` registers one replayable `catalog.transform`; fail-soft (warn once via `console.warn`, return, never throw).
+- `src/index.ts` — default export is `createPlugin()` V2 definition (`id: opencode.9router`). `setup` registers one replayable `provider.transform`; fail-soft (warn once via `console.warn`, return, never throw).
 - `src/config.ts` — env `OPENCODE_9ROUTER_URL` / `OPENCODE_9ROUTER_API_KEY`, per-key fallback to `~/.config/environment.d/9router.conf`. Env wins. URL must be `http(s)`, end in `/v1`, no credentials/query/fragment.
 - `src/discovery.ts` — single `GET <baseURL>/models` with Bearer auth, `redirect: "error"`, 5s timeout, 1 MiB cap. Keeps the first 1000 usable models and reports the dropped count via `onTruncated`. Dedupes by ID, preserves upstream IDs exactly, ignores IDs with whitespace/control chars or >512 chars. Releases the reader lock on every path; cancels the stream on failures.
-- `src/provider.ts` — registers provider `9router` (`9Router`) with `package: aisdk:@ai-sdk/openai-compatible`; each model sets `package` the same, `modelID` = full discovered route, name derived from last `/` segment. `model.api` shape is a stale snapshot — do not use.
+- `src/provider.ts` — registers provider `9router` (`9Router`) with `package: @opencode/ai/providers/openai-compatible` via `editor.add`/`editor.update` plus `editor.models.set`; each model sets `package` the same, `modelID` = full discovered route, name derived from last `/` segment. The `catalog.transform` / `model.api` shapes are stale beta snapshots — do not use.
 
 ## Gotchas
 

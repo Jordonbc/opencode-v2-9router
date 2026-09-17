@@ -1,4 +1,4 @@
-import { Plugin } from "@opencode-ai/plugin";
+import { Plugin } from "@opencode/plugin";
 import { loadConfig, type ConfigResult } from "./config.js";
 import {
   discoverModels,
@@ -68,7 +68,7 @@ export const createPlugin = (overrides: PartialDependencies = {}): Plugin.Plugin
   const dependencies: Dependencies = { ...defaults, ...stripUndefined(overrides) };
   return Plugin.define({
     id: PLUGIN_ID,
-    setup: async ({ catalog }) => {
+    setup: async ({ provider }) => {
       const warn = safeSink(dependencies.warn);
       const info = safeSink(dependencies.info);
 
@@ -112,8 +112,8 @@ export const createPlugin = (overrides: PartialDependencies = {}): Plugin.Plugin
       let registered = 0;
       let skipped = 0;
       try {
-        await catalog.transform((draft) => {
-          const outcome = register9RouterCatalog(draft, result.value, models, {
+        await provider.transform((editor) => {
+          const outcome = register9RouterCatalog(editor, result.value, models, {
             warn,
             warnedRoutes,
             onResolved: (resolved) => {

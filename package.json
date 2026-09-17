@@ -44,7 +44,7 @@
     "node": ">=20"
   },
   "dependencies": {
-    "@opencode-ai/plugin": "0.0.0-next-17444"
+    "@opencode/plugin": "2.0.6"
   },
   "devDependencies": {
     "@types/node": "^24.3.0",
