@@ -1,6 +1,6 @@
 # opencode-9router-v2
 
-Unofficial native OpenCode V2 plugin that discovers models from a private 9Router OpenAI-compatible gateway. It was built against `opencode v2.0.6` and `@opencode/plugin 2.0.6`.
+Unofficial native OpenCode V2 plugin that discovers models from a private 9Router OpenAI-compatible gateway, plus native support for an OmniRoute gateway as a second, independent provider. It was built against `opencode v2.0.6` and `@opencode/plugin 2.0.6`.
 
 OpenCode V2 is still a preview. Re-check the plugin SDK contract before upgrading either pinned beta dependency.
 
@@ -13,8 +13,9 @@ OpenCode V2 is still a preview. Re-check the plugin SDK contract before upgradin
 - Exposes OpenCode reasoning variants for models whose live 9Router metadata advertises reasoning.
 - Mirrors the transport/package metadata from the matching direct OpenCode model where possible (for example `aisdk:@ai-sdk/openai` for Responses-native models, `aisdk:@ai-sdk/anthropic` for Anthropic-native models), with `aisdk:@ai-sdk/openai-compatible` as fallback. The 9router `baseURL`/`apiKey` are always used; OpenCode is never pointed directly at `opencode.ai`.
 - Warns once and lets OpenCode continue if configuration or discovery fails.
+- Optionally registers a second provider for OmniRoute (see below). OmniRoute failure can never break 9Router, and vice versa.
 
-It does not execute commands, scan projects, cache results, or contact metadata services.
+It does not execute commands, scan projects, or contact metadata services beyond the configured gateways.
 
 ## Configure
 
@@ -34,6 +35,33 @@ OPENCODE_9ROUTER_API_KEY=your-key
 ```
 
 Environment variables override file values. Protect the file with `chmod 600 ~/.config/environment.d/9router.conf` and restart OpenCode after changing configuration.
+
+## OmniRoute (second provider)
+
+The same installed plugin can also expose an OmniRoute gateway as a separate provider (default id `omniroute`, display name `OmniRoute`). No `opencode.json` change is required. When `OPENCODE_OMNIROUTE_URL` is unset, OmniRoute stays silent and disabled.
+
+```sh
+export OPENCODE_OMNIROUTE_URL="http://127.0.0.1:20128"
+export OPENCODE_OMNIROUTE_API_KEY="your-key"
+# Optional distinct management credential for /api/* endpoints:
+export OPENCODE_OMNIROUTE_MANAGEMENT_API_KEY="your-management-key"
+```
+
+Compatibility fallbacks `OMNIROUTE_API_KEY` / `OMNIROUTE_MANAGEMENT_API_KEY` and a per-key fallback file at `~/.config/environment.d/omniroute.conf` are also recognised. A credential stored through OpenCode's native integration (`/connect`) wins over environment keys.
+
+Behaviour (adapted to this repo's `provider.transform` API):
+
+- Live models from `GET <root>/v1/models` (accepts `{data:[...]}` and bare arrays).
+- Combos from `GET <root>/api/combos` with bounded nested-combo resolution, least-common capabilities, hidden/combo-cycle handling and model-ID collision warnings.
+- Auto-combos from `GET <root>/api/combos/auto` (404 means none; future variants are accepted without code changes).
+- Optional enrichment (friendly names, provider tags, pricing, free-tier budgets) from `/api/pricing/models`, `/api/pricing` and `/api/free-tier/summary`; failures degrade to raw names.
+- Canonical/alias dedupe driven by enrichment metadata (no hardcoded provider table).
+- Optional usable-provider filtering (`OPENCODE_OMNIROUTE_USABLE_ONLY=1`, fail-open), visible/hidden model lists (`OPENCODE_OMNIROUTE_VISIBLE_MODELS`, `OPENCODE_OMNIROUTE_HIDDEN_MODELS`, comma-separated, deny wins).
+- Optional Anthropic-format routing (`OPENCODE_OMNIROUTE_ALLOW_ANTHROPIC=1` with `OPENCODE_OMNIROUTE_ANTHROPIC_MODELS`; both formats stay on the OmniRoute gateway).
+- Gemini tool-schema sanitisation for Gemini-routed models (disable with `OPENCODE_OMNIROUTE_GEMINI_SANITIZATION=0`).
+- In-memory TTL cache (`OPENCODE_OMNIROUTE_CACHE_TTL_MS`, default 300000) with refresh coalescing, last-known-good fallback and a disk warm-start snapshot honouring `OPENCODE_DATA_DIR` (atomic writes, `0600`, credential-bound fingerprint, no secrets stored).
+
+Further tuning: `OPENCODE_OMNIROUTE_PROVIDER_ID`, `OPENCODE_OMNIROUTE_DISPLAY_NAME`, `OPENCODE_OMNIROUTE_TIMEOUT_MS` plus per-endpoint `..._MODELS/COMBOS/AUTO_COMBOS/ENRICHMENT_TIMEOUT_MS`, `OPENCODE_OMNIROUTE_ENRICHMENT=0`, `OPENCODE_OMNIROUTE_PROVIDER_TAG=0`, `OPENCODE_OMNIROUTE_LOG_LEVEL`.
 
 ## Develop locally
 

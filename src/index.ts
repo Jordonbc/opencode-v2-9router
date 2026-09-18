@@ -7,6 +7,11 @@ import {
   type DiscoveredModel,
 } from "./discovery.js";
 import { register9RouterCatalog, MUSE_DEBUG_ROUTE } from "./provider.js";
+import {
+  defaultOmniRouteDeps,
+  setupOmniRoute,
+  type PartialOmniRouteSetupDeps,
+} from "./omniroute/setup.js";
 
 export const PLUGIN_ID = "opencode.9router";
 
@@ -15,6 +20,7 @@ type Dependencies = {
   readonly discover: typeof discoverModels;
   readonly warn: (message: string) => void;
   readonly info?: (message: string) => void;
+  readonly omniroute: PartialOmniRouteSetupDeps;
 };
 
 const defaults: Dependencies = {
@@ -22,6 +28,7 @@ const defaults: Dependencies = {
   discover: discoverModels,
   warn: (message) => console.warn(message),
   info: (message) => console.info(message),
+  omniroute: {},
 };
 
 type PartialDependencies = {
@@ -29,6 +36,7 @@ type PartialDependencies = {
   readonly discover?: Dependencies["discover"];
   readonly warn?: Dependencies["warn"];
   readonly info?: Dependencies["info"];
+  readonly omniroute?: PartialOmniRouteSetupDeps;
 };
 
 const safeSink =
@@ -41,12 +49,12 @@ const safeSink =
     }
   };
 
-const stripUndefined = (overrides: PartialDependencies): PartialDependencies => {
+const stripUndefined = <T extends Record<string, unknown>>(overrides: T): T => {
   const cleaned: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(overrides)) {
     if (value !== undefined) cleaned[key] = value;
   }
-  return cleaned as PartialDependencies;
+  return cleaned as T;
 };
 
 const isDiscoveredModel = (value: unknown): value is DiscoveredModel => {
@@ -68,7 +76,7 @@ export const createPlugin = (overrides: PartialDependencies = {}): Plugin.Plugin
   const dependencies: Dependencies = { ...defaults, ...stripUndefined(overrides) };
   return Plugin.define({
     id: PLUGIN_ID,
-    setup: async ({ provider }) => {
+    setup: async ({ provider, integration, aisdk }) => {
       const warn = safeSink(dependencies.warn);
       const info = safeSink(dependencies.info);
 
@@ -141,6 +149,19 @@ export const createPlugin = (overrides: PartialDependencies = {}): Plugin.Plugin
           ? `opencode-9router-v2: registered ${registered} model(s) from 9Router (skipped ${skipped} model(s))`
           : `opencode-9router-v2: registered ${registered} model(s) from 9Router`,
       );
+
+      // OmniRoute is an independent provider: its failure must never break 9Router.
+      try {
+        const omnirouteBase = defaultOmniRouteDeps();
+        await setupOmniRoute({ provider, integration, aisdk }, {
+          ...omnirouteBase,
+          warn: dependencies.warn,
+          info: dependencies.info,
+          ...stripUndefined(dependencies.omniroute),
+        });
+      } catch {
+        warn("opencode-9router-v2: omniroute setup failed; 9Router is unaffected");
+      }
     },
   });
 };
