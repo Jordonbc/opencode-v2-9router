@@ -7,6 +7,7 @@ import {
   type DiscoveredModel,
 } from "./discovery.js";
 import { register9RouterCatalog, MUSE_DEBUG_ROUTE } from "./provider.js";
+import { setupOmniRoute } from "./omniroute/runtime.js";
 
 export const PLUGIN_ID = "opencode.9router";
 
@@ -68,7 +69,16 @@ export const createPlugin = (overrides: PartialDependencies = {}): Plugin.Plugin
   const dependencies: Dependencies = { ...defaults, ...stripUndefined(overrides) };
   return Plugin.define({
     id: PLUGIN_ID,
-    setup: async ({ provider }) => {
+    setup: async (context) => {
+      try {
+        await setupOmniRoute(context as unknown as Record<string, any>);
+      } catch (error) {
+        safeSink(dependencies.warn)(
+          `opencode-9router-v2: OmniRoute setup failed; continuing without it: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+
+      const { provider } = context;
       const warn = safeSink(dependencies.warn);
       const info = safeSink(dependencies.info);
 
