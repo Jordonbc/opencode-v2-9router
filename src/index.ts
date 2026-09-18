@@ -80,6 +80,35 @@ export const createPlugin = (overrides: PartialDependencies = {}): Plugin.Plugin
       const warn = safeSink(dependencies.warn);
       const info = safeSink(dependencies.info);
 
+      // The two providers initialise independently: a failure in either
+      // path is caught and logged locally and must never stop the other.
+      try {
+        await setup9Router(provider, dependencies, warn, info);
+      } catch {
+        warn("opencode-9router-v2: 9Router setup failed; continuing");
+      }
+
+      try {
+        const omnirouteBase = defaultOmniRouteDeps();
+        await setupOmniRoute({ provider, integration, aisdk }, {
+          ...omnirouteBase,
+          warn: dependencies.warn,
+          info: dependencies.info,
+          ...stripUndefined(dependencies.omniroute),
+        });
+      } catch {
+        warn("opencode-9router-v2: omniroute setup failed; 9Router is unaffected");
+      }
+    },
+  });
+};
+
+const setup9Router = async (
+  provider: Plugin.Context["provider"],
+  dependencies: Dependencies,
+  warn: (message: string) => void,
+  info: (message: string) => void,
+): Promise<void> => {
       let result: ConfigResult;
       try {
         result = await dependencies.config();
@@ -149,21 +178,6 @@ export const createPlugin = (overrides: PartialDependencies = {}): Plugin.Plugin
           ? `opencode-9router-v2: registered ${registered} model(s) from 9Router (skipped ${skipped} model(s))`
           : `opencode-9router-v2: registered ${registered} model(s) from 9Router`,
       );
-
-      // OmniRoute is an independent provider: its failure must never break 9Router.
-      try {
-        const omnirouteBase = defaultOmniRouteDeps();
-        await setupOmniRoute({ provider, integration, aisdk }, {
-          ...omnirouteBase,
-          warn: dependencies.warn,
-          info: dependencies.info,
-          ...stripUndefined(dependencies.omniroute),
-        });
-      } catch {
-        warn("opencode-9router-v2: omniroute setup failed; 9Router is unaffected");
-      }
-    },
-  });
 };
 
 export default createPlugin();

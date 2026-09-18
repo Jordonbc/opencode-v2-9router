@@ -4,8 +4,19 @@ import { ConfigError } from "../src/config.js";
 import defaultPlugin, { createPlugin, PLUGIN_ID } from "../src/index.js";
 import type { ProviderEditor } from "../src/provider.js";
 import { PROVIDER_ID, PROVIDER_PACKAGE } from "../src/provider.js";
+import type { PartialOmniRouteSetupDeps } from "../src/omniroute/setup.js";
 
 const okConfig = { apiKey: "secret-key", baseURL: "http://router.test/v1" } as const;
+
+/**
+ * These 9Router-scoped tests must stay hermetic: the OmniRoute integration
+ * reads real environment/fallback configuration and reaches the network by
+ * default, so pin it to disabled here. OmniRoute behaviour is covered by
+ * tests/omniroute-setup.test.ts instead. No 9Router assertion below changes.
+ */
+const omnirouteDisabled: { readonly omniroute: PartialOmniRouteSetupDeps } = {
+  omniroute: { config: async () => ({ ok: true as const, value: undefined }) },
+};
 
 type MutableRecord = Record<string, unknown>;
 
@@ -69,6 +80,7 @@ const setupWithProvider = (
 
 test("exports a native V2 default definition", async () => {
   const plugin = createPlugin({
+    ...omnirouteDisabled,
     config: async () => ({
       ok: true,
       value: { apiKey: "secret-key", baseURL: "http://router.test/v1" },
@@ -93,6 +105,7 @@ test("registers discovered models through provider.transform", async () => {
   const id = "ocg/muse-spark-1.3-contributor";
   const seenOptions: unknown[] = [];
   const plugin = createPlugin({
+    ...omnirouteDisabled,
     config: async () => ({ ok: true, value: { ...okConfig } }),
     discover: async (_config, options) => {
       seenOptions.push(options);
@@ -128,6 +141,7 @@ test("registers discovered models through provider.transform", async () => {
 test("warns when discovery truncates beyond the model limit", async () => {
   const warnings: string[] = [];
   const plugin = createPlugin({
+    ...omnirouteDisabled,
     config: async () => ({ ok: true, value: { ...okConfig } }),
     discover: async (_config, options) => {
       options?.onTruncated?.(3);
@@ -147,6 +161,7 @@ test("warns when discovery truncates beyond the model limit", async () => {
 test("stays silent through info when no info sink is configured", async () => {
   const warnings: string[] = [];
   const plugin = createPlugin({
+    ...omnirouteDisabled,
     config: async () => ({ ok: true, value: { ...okConfig } }),
     discover: async () => [{ id: "a", reasoning: false, thinkingCanDisable: false }],
     warn: (message) => warnings.push(message),
@@ -161,6 +176,7 @@ test("warns instead of throwing when provider.transform fails", async () => {
   const warnings: string[] = [];
   const infos: string[] = [];
   const plugin = createPlugin({
+    ...omnirouteDisabled,
     config: async () => ({ ok: true, value: { ...okConfig } }),
     discover: async () => [{ id: "a", reasoning: false, thinkingCanDisable: false }],
     warn: (message) => warnings.push(message),
@@ -186,6 +202,7 @@ test("offline discovery emits one safe warning and does not register", async () 
   let transforms = 0;
   const secret = "never-log-this-key";
   const plugin = createPlugin({
+    ...omnirouteDisabled,
     config: async () => ({
       ok: true,
       value: { apiKey: secret, baseURL: "http://router.test/v1" },
@@ -214,6 +231,7 @@ test("offline discovery emits one safe warning and does not register", async () 
 test("missing configuration warns without failing plugin setup", async () => {
   const warnings: string[] = [];
   const plugin = createPlugin({
+    ...omnirouteDisabled,
     config: async () => ({
       ok: false,
       error: new ConfigError("OPENCODE_9ROUTER_API_KEY is not configured"),
@@ -234,6 +252,7 @@ test("empty discovery warns and does not register", async () => {
   const warnings: string[] = [];
   let transforms = 0;
   const plugin = createPlugin({
+    ...omnirouteDisabled,
     config: async () => ({ ok: true, value: { ...okConfig } }),
     discover: async () => [],
     warn: (message) => warnings.push(message),
@@ -277,14 +296,16 @@ test("default dependencies warn and report success through the console", async (
     infos.push(String(message));
   };
   try {
-    await createPlugin().setup({
+    await createPlugin({ ...omnirouteDisabled }).setup({
       provider: {
         transform: async () => {
           throw new Error("should not register with no models");
         },
       },
     } as never);
-    await defaultPlugin.setup({
+    // Default 9Router config/discover/console sinks; OmniRoute stays pinned
+    // off so this test never touches the network or disk.
+    await createPlugin({ ...omnirouteDisabled }).setup({
       provider: {
         transform: async (update: (editor: ProviderEditor) => void) => {
           update(createEditor().editor);
@@ -308,6 +329,7 @@ test("default dependencies warn and report success through the console", async (
 test("info sink receives the registration summary", async () => {
   const infos: string[] = [];
   await createPlugin({
+    ...omnirouteDisabled,
     config: async () => ({ ok: true, value: { ...okConfig } }),
     discover: async () => [{ id: "ocg/model", reasoning: false, thinkingCanDisable: false }],
     warn: () => undefined,
@@ -338,6 +360,7 @@ test("emits transport observability for the Muse route without credentials", asy
     },
   ]);
   await createPlugin({
+    ...omnirouteDisabled,
     config: async () => ({ ok: true, value: { apiKey: secret, baseURL: "http://router.test/v1" } }),
     discover: async () => [
       { id: "ocg/muse-spark-1.3-contributor", reasoning: false, thinkingCanDisable: false },
@@ -367,6 +390,7 @@ test("a throwing config dependency warns instead of failing setup", async () => 
   let transforms = 0;
   const secret = "never-log-this-key";
   const plugin = createPlugin({
+    ...omnirouteDisabled,
     config: async () => {
       throw new Error(`config blew up containing ${secret}`);
     },
@@ -402,7 +426,7 @@ test("partial dependency overrides merge with the defaults", async () => {
   try {
     let transforms = 0;
     // Only warn is overridden; config/discover fall back to the defaults.
-    await createPlugin({ warn: (message) => warnings.push(message) }).setup({
+    await createPlugin({ ...omnirouteDisabled, warn: (message) => warnings.push(message) }).setup({
       provider: {
         transform: async (update: (editor: ProviderEditor) => void) => {
           transforms += 1;
@@ -425,6 +449,7 @@ test("partial dependency overrides merge with the defaults", async () => {
 test("a throwing info sink does not break setup", async () => {
   const warnings: string[] = [];
   await createPlugin({
+    ...omnirouteDisabled,
     config: async () => ({ ok: true, value: { ...okConfig } }),
     discover: async () => [{ id: "ocg/model", reasoning: false, thinkingCanDisable: false }],
     warn: (message) => warnings.push(message),
@@ -445,6 +470,7 @@ test("a throwing info sink does not break setup", async () => {
 test("a throwing warn sink cannot break setup", async () => {
   let transforms = 0;
   await createPlugin({
+    ...omnirouteDisabled,
     config: async () => ({ ok: false, error: new ConfigError("nope") }),
     discover: async () => {
       throw new Error("should not run");
@@ -467,6 +493,7 @@ test("a non-array discover return warns instead of throwing", async () => {
   const warnings: string[] = [];
   let transforms = 0;
   await createPlugin({
+    ...omnirouteDisabled,
     config: async () => ({ ok: true, value: { ...okConfig } }),
     discover: (async () => ({ id: "a" })) as never,
     warn: (message) => warnings.push(message),
@@ -509,6 +536,7 @@ test("discover elements with invalid shapes warn instead of registering", async 
     const warnings: string[] = [];
     let transforms = 0;
     await createPlugin({
+      ...omnirouteDisabled,
       config: async () => ({ ok: true, value: { ...okConfig } }),
       discover: (async () => payload) as never,
       warn: (message) => warnings.push(message),
@@ -531,6 +559,7 @@ test("deduplicates ambiguous-route warnings across transform replays", async () 
   const warnings: string[] = [];
   let replay: ((editor: ProviderEditor) => void) | undefined;
   await createPlugin({
+    ...omnirouteDisabled,
     config: async () => ({ ok: true, value: { ...okConfig } }),
     discover: async () => [{ id: "route/model", reasoning: false, thinkingCanDisable: false }],
     warn: (message) => warnings.push(message),
@@ -577,6 +606,7 @@ test("explicit undefined overrides fall back to the defaults", async () => {
   try {
     let transforms = 0;
     await createPlugin({
+      ...omnirouteDisabled,
       config: undefined,
       discover: undefined,
       warn: (message) => warnings.push(message),
@@ -604,6 +634,7 @@ test("setup summary reports skipped models when the inventory write fails", asyn
   const warnings: string[] = [];
   const infos: string[] = [];
   await createPlugin({
+    ...omnirouteDisabled,
     config: async () => ({ ok: true, value: { ...okConfig } }),
     discover: async () => [
       {

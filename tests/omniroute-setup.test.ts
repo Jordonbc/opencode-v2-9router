@@ -3,6 +3,7 @@ import { mkdtemp, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { ConfigError } from "../src/config.js";
 import type { ProviderEditor } from "../src/provider.js";
 import { createOmniRouteCache } from "../src/omniroute/cache.js";
 import {
@@ -1185,4 +1186,183 @@ test("contains background refresh explosions", async () => {
   assert.equal(calls, 2);
   assert.equal(context.transforms(), 1);
   assert.equal(context.reloads(), 0);
+});
+
+test("9Router config failure does not stop OmniRoute", async () => {
+  const warnings: string[] = [];
+  const collect = (message: string): void => {
+    warnings.push(message);
+  };
+  const plugin = createPlugin({
+    config: async () => ({
+      ok: false,
+      error: new ConfigError("OPENCODE_9ROUTER_API_KEY is not configured"),
+    }),
+    discover: async () => {
+      throw new Error("should not run");
+    },
+    warn: collect,
+    omniroute: deps({ warn: collect, info: collect }),
+  });
+  const stores = createEditor();
+  let transforms = 0;
+  await plugin.setup({
+    provider: {
+      transform: (async (update: (editor: ProviderEditor) => void) => {
+        transforms += 1;
+        update(stores.editor);
+        return { dispose: async () => undefined };
+      }) as never,
+    },
+  } as never);
+
+  assert.equal(transforms, 1);
+  assert.equal(stores.providers.get("9router"), undefined);
+  assert.ok(stores.providers.get("omniroute"));
+  assert.ok([...stores.models.keys()].includes("omniroute/cc/a"));
+  assert.ok(
+    warnings.includes("opencode-9router-v2: OPENCODE_9ROUTER_API_KEY is not configured"),
+  );
+});
+
+test("9Router discovery failure does not stop OmniRoute", async () => {
+  const warnings: string[] = [];
+  const collect = (message: string): void => {
+    warnings.push(message);
+  };
+  const plugin = createPlugin({
+    config: async () => ({ ok: true, value: { apiKey: "nine", baseURL: "http://nine/v1" } }),
+    discover: async () => {
+      throw new Error("gateway down");
+    },
+    warn: collect,
+    omniroute: deps({ warn: collect, info: collect }),
+  });
+  const stores = createEditor();
+  let transforms = 0;
+  await plugin.setup({
+    provider: {
+      transform: (async (update: (editor: ProviderEditor) => void) => {
+        transforms += 1;
+        update(stores.editor);
+        return { dispose: async () => undefined };
+      }) as never,
+    },
+  } as never);
+
+  assert.equal(transforms, 1);
+  assert.equal(stores.providers.get("9router"), undefined);
+  assert.ok(stores.providers.get("omniroute"));
+  assert.ok(
+    warnings.includes("opencode-9router-v2: model discovery failed; 9Router will be unavailable"),
+  );
+});
+
+test("OmniRoute failure does not stop 9Router", async () => {
+  const warnings: string[] = [];
+  const plugin = createPlugin({
+    config: async () => ({ ok: true, value: { apiKey: "nine", baseURL: "http://nine/v1" } }),
+    discover: async () => [{ id: "ocg/model", reasoning: false, thinkingCanDisable: false }],
+    warn: (message) => warnings.push(message),
+    omniroute: {
+      config: async () => {
+        throw new Error("omniroute config blew up");
+      },
+    },
+  });
+  const stores = createEditor();
+  let transforms = 0;
+  await plugin.setup({
+    provider: {
+      transform: (async (update: (editor: ProviderEditor) => void) => {
+        transforms += 1;
+        update(stores.editor);
+        return { dispose: async () => undefined };
+      }) as never,
+    },
+  } as never);
+
+  assert.equal(transforms, 1);
+  assert.ok(stores.providers.get("9router"));
+  assert.ok([...stores.models.keys()].includes("9router/ocg/model"));
+  assert.equal(stores.providers.get("omniroute"), undefined);
+  assert.deepEqual(warnings, ["opencode-9router-v2: invalid omniroute configuration"]);
+});
+
+test("both providers register independently when both are valid", async () => {
+  const warnings: string[] = [];
+  const infos: string[] = [];
+  const collectWarn = (message: string): void => {
+    warnings.push(message);
+  };
+  const collectInfo = (message: string): void => {
+    infos.push(message);
+  };
+  const plugin = createPlugin({
+    config: async () => ({ ok: true, value: { apiKey: "nine", baseURL: "http://nine/v1" } }),
+    discover: async () => [{ id: "ocg/model", reasoning: false, thinkingCanDisable: false }],
+    warn: collectWarn,
+    info: collectInfo,
+    omniroute: deps({ warn: collectWarn, info: collectInfo }),
+  });
+  const stores = createEditor();
+  let transforms = 0;
+  await plugin.setup({
+    provider: {
+      transform: (async (update: (editor: ProviderEditor) => void) => {
+        transforms += 1;
+        update(stores.editor);
+        return { dispose: async () => undefined };
+      }) as never,
+    },
+  } as never);
+
+  assert.equal(transforms, 2);
+  assert.deepEqual(warnings, []);
+  const nine = stores.providers.get("9router") as Record<string, unknown>;
+  const omni = stores.providers.get("omniroute") as Record<string, unknown>;
+  assert.ok(nine && omni);
+  assert.notEqual(
+    (nine.settings as Record<string, unknown>).baseURL,
+    (omni.settings as Record<string, unknown>).baseURL,
+  );
+  assert.notEqual(
+    (nine.settings as Record<string, unknown>).apiKey,
+    (omni.settings as Record<string, unknown>).apiKey,
+  );
+  assert.ok([...stores.models.keys()].includes("9router/ocg/model"));
+  assert.ok([...stores.models.keys()].includes("omniroute/cc/a"));
+  assert.ok(infos.some((message) => message.includes("from 9Router")));
+  assert.ok(infos.some((message) => message.includes("from OmniRoute")));
+});
+
+test("neither provider configured fails soft without crashing", async () => {
+  const warnings: string[] = [];
+  const plugin = createPlugin({
+    config: async () => ({
+      ok: false,
+      error: new ConfigError("OPENCODE_9ROUTER_API_KEY is not configured"),
+    }),
+    discover: async () => {
+      throw new Error("should not run");
+    },
+    warn: (message) => warnings.push(message),
+    omniroute: {
+      config: async () => ({ ok: true, value: undefined }),
+    },
+  });
+  let transforms = 0;
+  await plugin.setup({
+    provider: {
+      transform: (async () => {
+        transforms += 1;
+        return { dispose: async () => undefined };
+      }) as never,
+    },
+  } as never);
+
+  assert.equal(transforms, 0);
+  assert.deepEqual(warnings, [
+    "opencode-9router-v2: OPENCODE_9ROUTER_API_KEY is not configured",
+  ]);
 });
