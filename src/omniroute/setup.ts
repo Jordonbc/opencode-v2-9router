@@ -240,6 +240,8 @@ export const registerResponseSanitizerHook = async (
   providerID: string,
   enabled: boolean,
   warn: ((message: string) => void) | undefined,
+  info: ((message: string) => void) | undefined = undefined,
+  debug: boolean = false,
 ): Promise<void> => {
   if (!enabled) return;
   if (!session || typeof session !== "object") {
@@ -265,6 +267,16 @@ export const registerResponseSanitizerHook = async (
       "http.response",
       async (input) => {
         try {
+          if (debug) {
+            const modelRecord =
+              input && typeof input === "object"
+                ? ((input as { model?: unknown }).model as { providerID?: unknown; id?: unknown } | undefined)
+                : undefined;
+            safeWarn(
+              info ?? warn,
+              `opencode-9router-v2: omniroute http.response invoked provider=${String(modelRecord?.providerID)} model=${String(modelRecord?.id)} content-type=${String((input as { response?: Response }).response?.headers?.get?.("content-type"))}`,
+            );
+          }
           if (!input || typeof input !== "object") return;
           const model = (input as { model?: unknown }).model;
           if (!model || typeof model !== "object") return;
@@ -617,6 +629,8 @@ export const setupOmniRoute = async (
     config.providerID,
     config.responseSanitization,
     deps.warn,
+    deps.info,
+    config.logLevel === "debug",
   );
 
   // Stale snapshot served: one background refresh, then a single reload only
