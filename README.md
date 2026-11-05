@@ -59,6 +59,7 @@ Behaviour (adapted to this repo's `provider.transform` API):
 - Optional usable-provider filtering (`OPENCODE_OMNIROUTE_USABLE_ONLY=1`, fail-open), visible/hidden model lists (`OPENCODE_OMNIROUTE_VISIBLE_MODELS`, `OPENCODE_OMNIROUTE_HIDDEN_MODELS`, comma-separated, deny wins).
 - Optional Anthropic-format routing (`OPENCODE_OMNIROUTE_ALLOW_ANTHROPIC=1` with `OPENCODE_OMNIROUTE_ANTHROPIC_MODELS`; both formats stay on the OmniRoute gateway).
 - Gemini tool-schema sanitisation for Gemini-routed models (disable with `OPENCODE_OMNIROUTE_GEMINI_SANITIZATION=0`).
+- Optional diagnostic SSE response sanitiser for OpenCode Go routes accessed through OmniRoute (disabled by default; enable with `OPENCODE_OMNIROUTE_RESPONSE_SANITIZATION=1`). It removes only `usage.opencode` from usage-only SSE events to test whether that metadata causes `go-plus` contamination. Disable with `OPENCODE_OMNIROUTE_RESPONSE_SANITIZATION=0`.
 - In-memory TTL cache (`OPENCODE_OMNIROUTE_CACHE_TTL_MS`, default 300000) with refresh coalescing, last-known-good fallback and a disk warm-start snapshot honouring `OPENCODE_DATA_DIR` (atomic writes, `0600`, credential-bound fingerprint, no secrets stored).
 
 Further tuning: `OPENCODE_OMNIROUTE_PROVIDER_ID`, `OPENCODE_OMNIROUTE_DISPLAY_NAME`, `OPENCODE_OMNIROUTE_TIMEOUT_MS` plus per-endpoint `..._MODELS/COMBOS/AUTO_COMBOS/ENRICHMENT_TIMEOUT_MS`, `OPENCODE_OMNIROUTE_ENRICHMENT=0`, `OPENCODE_OMNIROUTE_PROVIDER_TAG=0`, `OPENCODE_OMNIROUTE_LOG_LEVEL`.
