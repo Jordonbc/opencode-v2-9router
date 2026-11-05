@@ -148,11 +148,22 @@ type CallOptions = { readonly tools?: unknown } & Record<string, unknown>;
  * Wrap an AI SDK language model so Gemini-bound requests carry cleaned tool
  * schemas. Non-Gemini models return untouched.
  */
-const stripOpencodeFromUsage = (usage: unknown): unknown => {
-  if (!usage || typeof usage !== "object" || Array.isArray(usage)) return usage;
+const stripOpencodeFromUsage = (
+  usage: unknown,
+  diagnostic?: (message: string) => void,
+): { readonly usage: unknown; readonly found: boolean; readonly keys: readonly string[] } => {
+  if (!usage || typeof usage !== "object" || Array.isArray(usage)) {
+    return { usage, found: false, keys: [] };
+  }
   const record = usage as Record<string, unknown>;
   const next = { ...record };
-  if (Object.prototype.hasOwnProperty.call(next, "opencode")) delete next.opencode;
+  let found = false;
+  const keys: string[] = [];
+  if (Object.prototype.hasOwnProperty.call(next, "opencode")) {
+    found = true;
+    keys.push("(top-level)");
+    delete next.opencode;
+  }
   const providerMetadata = next.providerMetadata;
   if (providerMetadata && typeof providerMetadata === "object" && !Array.isArray(providerMetadata)) {
     const metadata = { ...(providerMetadata as Record<string, unknown>) };
@@ -160,18 +171,26 @@ const stripOpencodeFromUsage = (usage: unknown): unknown => {
       const value = metadata[key];
       if (value && typeof value === "object" && !Array.isArray(value)) {
         const entry = { ...(value as Record<string, unknown>) };
-        if (Object.prototype.hasOwnProperty.call(entry, "opencode")) delete entry.opencode;
-        metadata[key] = entry;
+        if (Object.prototype.hasOwnProperty.call(entry, "opencode")) {
+          found = true;
+          keys.push(key);
+          delete entry.opencode;
+          metadata[key] = entry;
+        }
       }
     }
     next.providerMetadata = metadata;
   }
-  return next;
+  if (diagnostic && found) {
+    diagnostic(`opencode-9router-v2: usage sanitization removed opencode from: ${keys.join(", ")}`);
+  }
+  return { usage: next, found, keys };
 };
 
 export const wrapLanguageModelForUsageSanitization = <T extends LanguageModelLike>(
   language: T | undefined,
   modelID: string,
+  diagnostic?: (message: string) => void,
 ): T | undefined => {
   if (!language || !modelID.startsWith("opencode-go/")) return language;
   const source: LanguageModelLike = language;
@@ -180,13 +199,22 @@ export const wrapLanguageModelForUsageSanitization = <T extends LanguageModelLik
       return stream;
     }
     const readable = stream as ReadableStream<unknown>;
+    if (diagnostic) diagnostic("opencode-9router-v2: usage sanitization doStream executed");
     return readable.pipeThrough(
       new TransformStream<unknown, unknown>({
         transform(part, controller) {
           if (part && typeof part === "object" && !Array.isArray(part)) {
             const record = part as Record<string, unknown>;
-            if (record.type === "finish" && "usage" in record) {
-              controller.enqueue({ ...record, usage: stripOpencodeFromUsage(record.usage) });
+            if (record.type === "finish") {
+              if (diagnostic) diagnostic("opencode-9router-v2: usage sanitization finish event received");
+              const result = stripOpencodeFromUsage(record.usage, diagnostic);
+              if (diagnostic) {
+                diagnostic(
+                  `opencode-9router-v2: usage sanitization metadata present=${result.found} keys=${result.keys.join(",") || "none"}`,
+                );
+                diagnostic("opencode-9router-v2: usage sanitization finish event forwarded");
+              }
+              controller.enqueue({ ...record, usage: result.usage });
               return;
             }
           }
@@ -200,11 +228,18 @@ export const wrapLanguageModelForUsageSanitization = <T extends LanguageModelLik
     const result = await source.doGenerate(options as never);
     if (result && typeof result === "object" && !Array.isArray(result)) {
       const record = result as Record<string, unknown>;
-      if ("usage" in record) record.usage = stripOpencodeFromUsage(record.usage);
+      if ("usage" in record) {
+        const stripped = stripOpencodeFromUsage(record.usage, diagnostic);
+        record.usage = stripped.usage;
+        if (diagnostic && stripped.found) {
+          diagnostic(`opencode-9router-v2: usage sanitization doGenerate removed opencode from: ${stripped.keys.join(", ")}`);
+        }
+      }
     }
     return result;
   };
   wrapped.doStream = async (options: unknown) => {
+    if (diagnostic) diagnostic("opencode-9router-v2: usage sanitization doStream invoked");
     const result = await source.doStream(options as never);
     if (result && typeof result === "object" && !Array.isArray(result)) {
       const record = result as Record<string, unknown>;

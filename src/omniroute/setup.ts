@@ -345,20 +345,23 @@ const registerUsageSanitizationHook = (
       ) => unknown
     )("language", (input) => {
       try {
+        safeWarn(warn, "opencode-9router-v2: usage sanitization language hook executed");
         if (!input || typeof input !== "object") return;
         if (input.model?.providerID !== providerID) return;
         if (typeof input.model?.id !== "string") return;
         if (!input.model.id.startsWith("opencode-go/")) return;
+        safeWarn(
+          warn,
+          `opencode-9router-v2: usage sanitization model matched provider=${String(input.model.providerID)} model=${String(input.model.id)}`,
+        );
         const wrapped = wrapLanguageModelForUsageSanitization(
           input.language as LanguageModelLike | undefined,
           input.model.id,
+          (message) => safeWarn(warn, message),
         );
         if (wrapped !== input.language) {
           input.language = wrapped;
-          safeWarn(
-            warn,
-            `opencode-9router-v2: omniroute usage sanitization applied provider=${String(input.model.providerID)} model=${String(input.model.id)}`,
-          );
+          safeWarn(warn, "opencode-9router-v2: usage sanitization language model wrapped");
         }
       } catch {
         // Per-request hooks must never throw.
