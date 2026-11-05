@@ -31,6 +31,7 @@ const baseConfig = {
   enrichment: true,
   providerTag: true,
   geminiSanitization: true,
+  responseSanitization: false,
   visibleModels: [],
   hiddenModels: [],
   allowAnthropic: false,

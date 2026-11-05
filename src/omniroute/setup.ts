@@ -35,6 +35,7 @@ import {
 } from "./cache.js";
 import { readConnectionKey } from "./credentials.js";
 import { wrapLanguageModelForGemini, type LanguageModelLike } from "./gemini.js";
+import { createSseSanitizer } from "../sanitiser.js";
 import { registerOmniRouteCatalog } from "./provider.js";
 
 export type OmniRouteContext = {
@@ -44,6 +45,7 @@ export type OmniRouteContext = {
   };
   readonly integration?: unknown;
   readonly aisdk?: unknown;
+  readonly session?: unknown;
 };
 
 export type OmniRouteFetchers = {
@@ -229,6 +231,94 @@ const registerLanguageHook = (
     return undefined;
   });
 };
+
+const isAffectedOpenCodeGoRoute = (modelID: string): boolean =>
+  modelID.startsWith("opencode-go/");
+
+export const registerResponseSanitizerHook = async (
+  session: unknown,
+  providerID: string,
+  enabled: boolean,
+  warn: ((message: string) => void) | undefined,
+): Promise<void> => {
+  if (!enabled) return;
+  if (!session || typeof session !== "object") {
+    safeWarn(warn, "opencode-9router-v2: omniroute response sanitization unavailable; continuing");
+    return;
+  }
+  const hook = (session as { hook?: unknown }).hook;
+  if (typeof hook !== "function") {
+    safeWarn(warn, "opencode-9router-v2: omniroute response sanitization unavailable; continuing");
+    return;
+  }
+  try {
+    await (
+      hook as (
+        name: string,
+        callback: (input: {
+          readonly model?: { readonly providerID?: unknown; readonly id?: unknown };
+          response: Response;
+        }) => Promise<void> | void,
+        options?: { readonly providerID?: string },
+      ) => Promise<unknown>
+    )(
+      "http.response",
+      async (input) => {
+        try {
+          if (!input || typeof input !== "object") return;
+          const model = (input as { model?: unknown }).model;
+          if (!model || typeof model !== "object") return;
+          const modelRecord = model as { providerID?: unknown; id?: unknown };
+          if (modelRecord.providerID !== providerID) return;
+          if (typeof modelRecord.id !== "string" || !isAffectedOpenCodeGoRoute(modelRecord.id)) return;
+          const response = (input as { response?: unknown }).response;
+          if (!(response instanceof Response)) return;
+          const contentType = response.headers.get("content-type") ?? "";
+          if (!contentType.toLowerCase().includes("text/event-stream")) return;
+          if (!response.body) return;
+
+          const headers = new Headers(response.headers);
+          headers.delete("content-length");
+          headers.delete("content-encoding");
+          headers.delete("transfer-encoding");
+
+          const sanitizer = createSseSanitizer();
+          const decoder = new TextDecoder("utf-8", { fatal: false });
+          const encoder = new TextEncoder();
+          const transformed = response.body.pipeThrough(
+            new TransformStream<Uint8Array, Uint8Array>({
+              transform(chunk, controller) {
+                const text = decoder.decode(chunk, { stream: true });
+                const out = sanitizer.transform(text);
+                if (out.length > 0) controller.enqueue(encoder.encode(out));
+              },
+              flush(controller) {
+                const tail = decoder.decode();
+                const out = sanitizer.transform(tail) + sanitizer.flush();
+                if (out.length > 0) controller.enqueue(encoder.encode(out));
+              },
+            }),
+          );
+          (input as { response: Response }).response = new Response(transformed, {
+            status: response.status,
+            statusText: response.statusText,
+            headers,
+          });
+        } catch {
+          // Response sanitization must never break response handling.
+        }
+      },
+      { providerID },
+    );
+  } catch {
+    safeWarn(warn, "opencode-9router-v2: omniroute response sanitization unavailable; continuing");
+  }
+};
+
+// Aliases for callers/tests that use alternate spellings.
+export const registerResponseSanitiserHook = registerResponseSanitizerHook;
+export const registerOmniRouteResponseSanitizer = registerResponseSanitizerHook;
+export const registerOmniRouteResponseSanitiser = registerResponseSanitizerHook;
 
 type SourceOutcome<T> = { readonly ok: true; readonly value: T } | { readonly ok: false };
 
@@ -521,6 +611,13 @@ export const setupOmniRoute = async (
   if (config.geminiSanitization) {
     await registerLanguageHook(context.aisdk, config.providerID, deps.warn);
   }
+
+  await registerResponseSanitizerHook(
+    context.session,
+    config.providerID,
+    config.responseSanitization,
+    deps.warn,
+  );
 
   // Stale snapshot served: one background refresh, then a single reload only
   // when the content actually changed. No loops, no storms.

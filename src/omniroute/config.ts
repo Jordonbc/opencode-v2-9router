@@ -41,6 +41,7 @@ export type OmniRouteConfig = {
   readonly enrichment: boolean;
   readonly providerTag: boolean;
   readonly geminiSanitization: boolean;
+  readonly responseSanitization: boolean;
   readonly visibleModels: readonly string[];
   readonly hiddenModels: readonly string[];
   readonly allowAnthropic: boolean;
@@ -247,6 +248,16 @@ export const loadOmniRouteConfig = async (
         geminiSanitization: parseBool(
           environment.OPENCODE_OMNIROUTE_GEMINI_SANITIZATION,
           true,
+        ),
+        responseSanitization: parseBool(
+          firstPresent(
+            environment.OPENCODE_OMNIROUTE_RESPONSE_SANITIZATION,
+            environment.OPENCODE_OMNIROUTE_GO_PLUS_SANITIZATION,
+            environment.OPENCODE_OMNIROUTE_RESPONSE_SANITISER,
+            environment.OPENCODE_OMNIROUTE_SANITIZER,
+            environment.OPENCODE_OMNIROUTE_SANITISE_RESPONSES,
+          ),
+          false,
         ),
         visibleModels: parseList(environment.OPENCODE_OMNIROUTE_VISIBLE_MODELS),
         hiddenModels: parseList(environment.OPENCODE_OMNIROUTE_HIDDEN_MODELS),
