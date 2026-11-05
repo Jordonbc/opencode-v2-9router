@@ -10,7 +10,7 @@ export const registerCompletionBoundary = async (
   if (!session || typeof session !== "object" || typeof (session as { hook?: unknown }).hook !== "function") return;
   try {
     await (session as Plugin.Context["session"]).hook("http.response", (input) => {
-      if (input.model.providerID !== providerID || input.model.id !== "opencode-go/beam-free") return;
+      if (input.model.providerID !== providerID || !input.model.id.startsWith("opencode-go/")) return;
       const response = input.response;
       if (!response.body || !response.headers.get("content-type")?.toLowerCase().includes("text/event-stream")) return;
       const boundary = createCompletionBoundary();

@@ -37,7 +37,7 @@ test("HTTP hook fixes primary and title responses with split UTF-8 and corrected
 test("preserves unrelated providers, routes, non-SSE, missing types and bodyless responses", async () => {
   const cb = await setup();
   const sse = () => new Response(body, { headers: { "content-type": "text/event-stream" } });
-  for (const event of [input(sse(), "other"), input(sse(), "omniroute", "opencode-go/other"), input(new Response(body)), input(new Response(body, { headers: { "content-type": "application/json" } })), input(new Response(null, { status: 204 }))]) {
+  for (const event of [input(sse(), "other"), input(sse(), "omniroute", "openai/gpt-4"), input(new Response(body)), input(new Response(body, { headers: { "content-type": "application/json" } })), input(new Response(null, { status: 204 }))]) {
     const original = event.response;cb(event);assert.equal(event.response, original);
   }
 });
@@ -67,4 +67,27 @@ test("missing hooks are harmless and failed registration warns without exception
   assert.equal(warnings.length, 0);
   await registerCompletionBoundary({ hook: async () => { throw new Error("secret"); } }, "omniroute", (s) => warnings.push(s));
   assert.deepEqual(warnings, ["opencode-9router-v2: omniroute completion boundary unavailable; continuing"]);
+});
+
+
+test("completion boundary covers every OpenCode Go route for assistant and title requests", async () => {
+  const cb = await setup();
+  for (const id of ["opencode-go/beam-free", "opencode-go/deepseek-v4.1-flash", "opencode-go/mimo-v2.6-flash", "opencode-go/muse-spark-1.3-contributor", "opencode-go/future-model"]) {
+    for (const kind of ["primary", "title"]) {
+      const event = input(new Response(body, { headers: { "content-type": "text/event-stream" } }), "omniroute", id, kind);
+      cb(event);
+      assert.equal(await event.response.text(), expected, `${id}: ${kind}`);
+    }
+  }
+});
+
+test("similar prefixes and Go routes belonging to another provider stay unchanged", async () => {
+  const cb = await setup();
+  for (const [providerID, id] of [["omniroute", "opencode-goose/model"], ["omniroute", "opencode-go-model"], ["omniroute", "opencode-go"], ["other", "opencode-go/deepseek-v4.1-flash"]]) {
+    const event = input(new Response(body, { headers: { "content-type": "text/event-stream" } }), providerID, id);
+    const original = event.response;
+    cb(event);
+    assert.equal(event.response, original);
+    assert.equal(await event.response.text(), body);
+  }
 });
