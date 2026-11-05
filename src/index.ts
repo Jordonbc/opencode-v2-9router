@@ -76,7 +76,8 @@ export const createPlugin = (overrides: PartialDependencies = {}): Plugin.Plugin
   const dependencies: Dependencies = { ...defaults, ...stripUndefined(overrides) };
   return Plugin.define({
     id: PLUGIN_ID,
-    setup: async ({ provider, integration, aisdk }) => {
+    setup: async (context) => {
+      const { provider, integration, aisdk } = context;
       const warn = safeSink(dependencies.warn);
       const info = safeSink(dependencies.info);
 
@@ -90,7 +91,7 @@ export const createPlugin = (overrides: PartialDependencies = {}): Plugin.Plugin
 
       try {
         const omnirouteBase = defaultOmniRouteDeps();
-        await setupOmniRoute({ provider, integration, aisdk }, {
+        await setupOmniRoute({ provider, integration, aisdk, session: (context as { session?: unknown }).session }, {
           ...omnirouteBase,
           warn: dependencies.warn,
           info: dependencies.info,
