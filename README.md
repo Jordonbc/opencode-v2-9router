@@ -1,6 +1,6 @@
 # opencode-9router-v2
 
-Unofficial native OpenCode V2 plugin that discovers models from a private 9Router OpenAI-compatible gateway, plus native support for an OmniRoute gateway as a second, independent provider. It was built against `opencode v2.0.6` and `@opencode/plugin 2.0.6`.
+Unofficial native OpenCode V2 plugin that discovers models from a private 9Router OpenAI-compatible gateway, plus native support for an OmniRoute gateway as a second, independent provider. It was built against `opencode v2.0.6` and `@opencode/plugin 2.2.5`.
 
 OpenCode V2 is still a preview. Re-check the plugin SDK contract before upgrading either pinned beta dependency.
 

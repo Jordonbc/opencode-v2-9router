@@ -44,10 +44,10 @@
     "node": ">=20"
   },
   "dependencies": {
-    "@opencode/plugin": "2.0.6"
+    "@opencode/plugin": "2.2.5"
   },
   "devDependencies": {
-    "@types/node": "^24.3.0",
-    "typescript": "^5.8.2"
+    "@types/node": "^26.6.6",
+    "typescript": "^7.0.2"
   }
 }
