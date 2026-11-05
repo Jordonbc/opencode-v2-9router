@@ -353,7 +353,13 @@ const registerUsageSanitizationHook = (
           input.language as LanguageModelLike | undefined,
           input.model.id,
         );
-        if (wrapped !== input.language) input.language = wrapped;
+        if (wrapped !== input.language) {
+          input.language = wrapped;
+          safeWarn(
+            warn,
+            `opencode-9router-v2: omniroute usage sanitization applied provider=${String(input.model.providerID)} model=${String(input.model.id)}`,
+          );
+        }
       } catch {
         // Per-request hooks must never throw.
       }
