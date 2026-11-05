@@ -107,6 +107,17 @@ test("returns undefined language untouched", () => {
   assert.equal(wrapped, undefined);
 });
 
+test("logs diagnostic when removing", async () => {
+  const messages: string[] = [];
+  const model: any = {
+    doGenerate: async () => ({ usage: { providerMetadata: { omniroute: { opencode: { billing_source: "go-plus" } } } } }),
+    doStream: async () => ({ stream: new ReadableStream({ start(c) { c.close(); } }) }),
+  };
+  const wrapped: any = wrapLanguageModelForUsageSanitization(model, "opencode-go/beam-free", (m) => messages.push(m));
+  await wrapped.doGenerate({});
+  assert.ok(messages.some((m) => m.includes("removed opencode")));
+});
+
 test("strips top-level opencode", async () => {
   const model: any = {
     doGenerate: async () => ({ usage: { opencode: { billing_source: "go-plus" }, inputTokens: 1 } }),
