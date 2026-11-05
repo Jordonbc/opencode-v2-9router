@@ -34,11 +34,7 @@ import {
   type OmniRouteSnapshot,
 } from "./cache.js";
 import { readConnectionKey } from "./credentials.js";
-import {
-  wrapLanguageModelForGemini,
-  wrapLanguageModelForUsageSanitization,
-  type LanguageModelLike,
-} from "./gemini.js";
+import { wrapLanguageModelForGemini, type LanguageModelLike } from "./gemini.js";
 import { createSseSanitizer } from "../sanitiser.js";
 import { registerOmniRouteCatalog } from "./provider.js";
 
@@ -336,50 +332,6 @@ export const registerResponseSanitiserHook = registerResponseSanitizerHook;
 export const registerOmniRouteResponseSanitizer = registerResponseSanitizerHook;
 export const registerOmniRouteResponseSanitiser = registerResponseSanitizerHook;
 
-const registerUsageSanitizationHook = (
-  aisdk: unknown,
-  providerID: string,
-  warn: ((message: string) => void) | undefined,
-): Promise<unknown> => {
-  if (!aisdk || typeof aisdk !== "object") return Promise.resolve(undefined);
-  const hook = (aisdk as { hook?: unknown }).hook;
-  if (typeof hook !== "function") return Promise.resolve(undefined);
-  let registration: unknown;
-  try {
-    registration = (
-      hook as (
-        name: string,
-        callback: (input: {
-          readonly model?: { readonly providerID?: unknown; readonly id?: unknown };
-          language?: unknown;
-        }) => void,
-        options?: { readonly providerID?: string },
-      ) => unknown
-    )("language", (input) => {
-      try {
-        if (!input || typeof input !== "object") return;
-        if (input.model?.providerID !== providerID) return;
-        if (typeof input.model?.id !== "string") return;
-        if (!input.model.id.startsWith("opencode-go/")) return;
-        const wrapped = wrapLanguageModelForUsageSanitization(
-          input.language as LanguageModelLike | undefined,
-          input.model.id,
-        );
-        if (wrapped !== input.language) input.language = wrapped;
-      } catch {
-        // Per-request hooks must never throw.
-      }
-    }, { providerID });
-  } catch {
-    safeWarn(warn, "opencode-9router-v2: omniroute response sanitization unavailable; continuing");
-    return Promise.resolve(undefined);
-  }
-  return Promise.resolve(registration).catch(() => {
-    safeWarn(warn, "opencode-9router-v2: omniroute response sanitization unavailable; continuing");
-    return undefined;
-  });
-};
-
 type SourceOutcome<T> = { readonly ok: true; readonly value: T } | { readonly ok: false };
 
 const fetchNetworkSnapshot = async (
@@ -670,10 +622,6 @@ export const setupOmniRoute = async (
 
   if (config.geminiSanitization) {
     await registerLanguageHook(context.aisdk, config.providerID, deps.warn);
-  }
-
-  if (config.responseSanitization) {
-    await registerUsageSanitizationHook(context.aisdk, config.providerID, deps.warn);
   }
 
   await registerResponseSanitizerHook(
