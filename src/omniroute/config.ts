@@ -257,7 +257,7 @@ export const loadOmniRouteConfig = async (
             environment.OPENCODE_OMNIROUTE_SANITIZER,
             environment.OPENCODE_OMNIROUTE_SANITISE_RESPONSES,
           ),
-          false,
+          true,
         ),
         visibleModels: parseList(environment.OPENCODE_OMNIROUTE_VISIBLE_MODELS),
         hiddenModels: parseList(environment.OPENCODE_OMNIROUTE_HIDDEN_MODELS),
