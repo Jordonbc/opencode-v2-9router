@@ -148,6 +148,60 @@ type CallOptions = { readonly tools?: unknown } & Record<string, unknown>;
  * Wrap an AI SDK language model so Gemini-bound requests carry cleaned tool
  * schemas. Non-Gemini models return untouched.
  */
+export const wrapLanguageModelForUsageSanitization = <T extends LanguageModelLike>(
+  language: T | undefined,
+  modelID: string,
+): T | undefined => {
+  if (!language || !modelID.startsWith("opencode-go/")) return language;
+  const source: LanguageModelLike = language;
+  const stripUsage = (usage: unknown): unknown => {
+    if (!usage || typeof usage !== "object" || Array.isArray(usage)) return usage;
+    const record = usage as Record<string, unknown>;
+    if (!Object.prototype.hasOwnProperty.call(record, "opencode")) return usage;
+    const next = { ...record };
+    delete next.opencode;
+    return next;
+  };
+  const cleanStream = (stream: unknown): unknown => {
+    if (!stream || typeof (stream as { pipeThrough?: unknown }).pipeThrough !== "function") {
+      return stream;
+    }
+    const readable = stream as ReadableStream<unknown>;
+    return readable.pipeThrough(
+      new TransformStream<unknown, unknown>({
+        transform(part, controller) {
+          if (part && typeof part === "object" && !Array.isArray(part)) {
+            const record = part as Record<string, unknown>;
+            if (record.type === "finish" && "usage" in record) {
+              controller.enqueue({ ...record, usage: stripUsage(record.usage) });
+              return;
+            }
+          }
+          controller.enqueue(part);
+        },
+      }),
+    );
+  };
+  const wrapped: LanguageModelLike = Object.create(source as object);
+  wrapped.doGenerate = async (options: unknown) => {
+    const result = await source.doGenerate(options as never);
+    if (result && typeof result === "object" && !Array.isArray(result)) {
+      const record = result as Record<string, unknown>;
+      if ("usage" in record) record.usage = stripUsage(record.usage);
+    }
+    return result;
+  };
+  wrapped.doStream = async (options: unknown) => {
+    const result = await source.doStream(options as never);
+    if (result && typeof result === "object" && !Array.isArray(result)) {
+      const record = result as Record<string, unknown>;
+      if ("stream" in record) record.stream = cleanStream(record.stream);
+    }
+    return result;
+  };
+  return wrapped as unknown as T;
+};
+
 export const wrapLanguageModelForGemini = <T extends LanguageModelLike>(
   language: T | undefined,
   modelID: string,
