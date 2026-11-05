@@ -56,7 +56,7 @@ const makeContext = () => {
   return { context, getHookCalls: () => hookCalls };
 };
 
-test("response sanitiser is disabled by default", async () => {
+test("billing response sanitiser is disabled independently of the completion boundary", async () => {
   const { context, getHookCalls } = makeContext();
   await setupOmniRoute(context, {
     config: async () => ({ ok: true as const, value: baseConfig(false) }),
@@ -75,7 +75,8 @@ test("response sanitiser is disabled by default", async () => {
     warn: () => undefined,
     info: () => undefined,
   });
-  assert.equal(getHookCalls(), 0);
+  // The completion boundary still registers when billing sanitization is off.
+  assert.equal(getHookCalls(), 1);
 });
 
 test("response sanitiser registers only when enabled", async () => {
@@ -97,5 +98,5 @@ test("response sanitiser registers only when enabled", async () => {
     warn: () => undefined,
     info: () => undefined,
   });
-  assert.equal(getHookCalls(), 1);
+  assert.equal(getHookCalls(), 2);
 });

@@ -39,6 +39,7 @@ import {
   wrapLanguageModelForUsageSanitization,
   type LanguageModelLike,
 } from "./gemini.js";
+import { registerCompletionBoundary } from "./completion-hook.js";
 import { createSseSanitizer } from "../sanitiser.js";
 import { registerOmniRouteCatalog } from "./provider.js";
 
@@ -664,6 +665,8 @@ export const setupOmniRoute = async (
     `opencode-9router-v2: registered ${built.modelCount} model(s) from OmniRoute ` +
       `(${built.comboCount} combo(s), ${built.autoComboCount} auto combo(s))`,
   );
+
+  await registerCompletionBoundary(context.session, config.providerID, warn);
 
   if (config.geminiSanitization) {
     await registerLanguageHook(context.aisdk, config.providerID, deps.warn);
